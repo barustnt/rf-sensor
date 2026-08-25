@@ -285,7 +285,7 @@ def main() -> None:
             profile_id="campus_general",
             technology="bluetooth-like",
             model_version="mock-v1",
-            prompt_version="technology-detection-v1",
+            prompt_version="technology-detection-primary-v2",
             status="succeeded",
         )
         _assert_paged(filtered_outputs, "filtered RF-GPT outputs")

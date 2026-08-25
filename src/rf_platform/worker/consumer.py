@@ -104,7 +104,7 @@ class WorkerProcessor:
             gain_db=capture.radio.get("gain_db"),
             profile_id=capture.profile_id,
             preprocessing_version=capture.preprocessing.get("pipeline_version"),
-            prompt_version=str(payload.get("prompt_version", "technology-detection-v1")),
+            prompt_version=str(payload.get("prompt_version", "technology-detection-primary-v2")),
         )
         try:
             result = validate_analysis_result(await self.adapter.analyze(request))

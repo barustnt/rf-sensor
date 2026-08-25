@@ -20,7 +20,7 @@ from rf_platform.common.ids import new_id
 from rf_platform.common.time import utc_now
 from rf_platform.contracts.capture import CaptureEnvelope, CaptureIngestResponse
 
-PROMPT_VERSION = "technology-detection-v1"
+PROMPT_VERSION = "technology-detection-primary-v2"
 
 
 @dataclass(frozen=True)

@@ -57,12 +57,15 @@ def _request(path: Path) -> AnalysisRequest:
         gain_db=30.0,
         profile_id="campus_general",
         preprocessing_version="atheer-hann-v1",
-        prompt_version="technology-detection-v1",
+        prompt_version="technology-detection-primary-v2",
     )
 
 
-def _chat_response(content: str) -> dict[str, Any]:
-    return {"choices": [{"message": {"content": content}}]}
+def _chat_response(content: str, finish_reason: str | None = "stop") -> dict[str, Any]:
+    choice: dict[str, Any] = {"message": {"content": content}}
+    if finish_reason is not None:
+        choice["finish_reason"] = finish_reason
+    return {"choices": [choice]}
 
 
 def _valid_content() -> str:
@@ -102,7 +105,7 @@ def test_vllm_default_generation_settings(monkeypatch: pytest.MonkeyPatch) -> No
     assert settings.rfgpt_temperature == 0.0
     assert settings.rfgpt_top_p == 1.0
     assert settings.rfgpt_repetition_penalty == 1.05
-    assert settings.rfgpt_max_output_tokens == 192
+    assert settings.rfgpt_max_output_tokens == 224
     assert settings.worker_concurrency == 1
 
 
@@ -149,17 +152,20 @@ async def test_successful_vllm_response_records_prompt_and_preprocessing(tmp_pat
     assert result.status == "succeeded"
     assert result.parser_valid is True
     assert result.model.version == "Qwen2.5-VL-7B-rfa-wtr-v2-joint"
+    assert result.model.prompt_version == "technology-detection-primary-v2"
     assert result.preprocessing_version == "atheer-hann-v1"
     assert result.inference_parameters["temperature"] == 0.0
     assert result.inference_parameters["top_p"] == 1.0
     assert result.inference_parameters["repetition_penalty"] == 1.05
-    assert result.inference_parameters["max_output_tokens"] == 192
+    assert result.inference_parameters["max_output_tokens"] == 224
+    assert result.inference_parameters["prompt_version"] == "technology-detection-primary-v2"
+    assert result.inference_parameters["response_schema"] == "rfgpt_analysis_primary_v2"
 
     payload = json.loads(chat.calls.last.request.content)
     assert payload["model"] == "rfgpt"
     assert payload["temperature"] == 0.0
     assert payload["repetition_penalty"] == 1.05
-    assert payload["max_tokens"] == 192
+    assert payload["max_tokens"] == 224
     user_content = payload["messages"][1]["content"]
     assert user_content[0]["type"] == "image_url"
     assert user_content[0]["image_url"]["url"].startswith("data:image/png;base64,")
@@ -167,10 +173,16 @@ async def test_successful_vllm_response_records_prompt_and_preprocessing(tmp_pat
     prompt = user_content[1]["text"]
     assert "sensor-1" in prompt
     assert "atheer-hann-v1" in prompt
+    assert "at most one item in technologies" in prompt
+    assert "at most one item in signals" in prompt
+    assert "no duplicate findings" in prompt
+    assert "compact single-line JSON" in prompt
     assert "Never identify a person" in payload["messages"][0]["content"]
+    assert "at most one primary technology finding" in payload["messages"][0]["content"]
+    assert "no Markdown" in payload["messages"][0]["content"]
     response_format = payload["response_format"]
     assert response_format["type"] == "json_schema"
-    assert response_format["json_schema"]["name"] == "rfgpt_analysis_v1"
+    assert response_format["json_schema"]["name"] == "rfgpt_analysis_primary_v2"
     assert response_format["json_schema"]["strict"] is True
     schema = response_format["json_schema"]["schema"]
     assert schema["additionalProperties"] is False
@@ -182,16 +194,23 @@ async def test_successful_vllm_response_records_prompt_and_preprocessing(tmp_pat
     }
     technologies_schema = schema["properties"]["technologies"]
     signals_schema = schema["properties"]["signals"]
-    assert technologies_schema["maxItems"] == 3
-    assert signals_schema["maxItems"] == 4
+    assert technologies_schema["minItems"] == 0
+    assert technologies_schema["maxItems"] == 1
+    assert signals_schema["minItems"] == 0
+    assert signals_schema["maxItems"] == 1
     assert technologies_schema["items"]["additionalProperties"] is False
     assert signals_schema["items"]["additionalProperties"] is False
-    assert technologies_schema["items"]["properties"]["evidence"]["maxItems"] == 5
+    assert technologies_schema["items"]["properties"]["evidence"]["maxItems"] == 2
+    assert signals_schema["items"]["properties"]["evidence"]["maxItems"] == 2
     assert technologies_schema["items"]["properties"]["evidence"]["items"]["maxLength"] == 160
-    assert technologies_schema["items"]["properties"]["label"]["maxLength"] == 80
-    assert technologies_schema["items"]["properties"]["observation"]["maxLength"] == 320
+    assert technologies_schema["items"]["properties"]["label"]["maxLength"] == 64
+    assert signals_schema["items"]["properties"]["label"]["maxLength"] == 64
+    assert technologies_schema["items"]["properties"]["observation"]["maxLength"] == 160
+    assert signals_schema["items"]["properties"]["observation"]["maxLength"] == 160
     assert technologies_schema["items"]["properties"]["model_score"]["type"] == ["number", "null"]
-    assert schema["properties"]["overall_assessment"]["maxLength"] == 600
+    assert schema["properties"]["overall_assessment"]["maxLength"] == 240
+    assert schema["properties"]["quality_flags"]["maxItems"] == 2
+    assert schema["properties"]["quality_flags"]["items"]["maxLength"] == 80
 
 
 @pytest.mark.asyncio
@@ -207,7 +226,7 @@ async def test_timeout_is_classified(tmp_path: Path) -> None:
     assert exc.value.retryable is True
     message = str(exc.value)
     assert "timeout_seconds=300" in message
-    assert "max_output_tokens=192" in message
+    assert "max_output_tokens=224" in message
     assert "endpoint=http://vllm.local/v1" in message
     assert "model_name=rfgpt" in message
     assert "model_version=Qwen2.5-VL-7B-rfa-wtr-v2-joint" in message
@@ -260,6 +279,24 @@ async def test_malformed_model_json_is_preserved_as_parser_invalid(tmp_path: Pat
     assert result.status == "parser_failed"
     assert result.parser_valid is False
     assert result.technologies == []
+    assert json.loads(result.raw_response) == raw
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_finish_reason_length_is_truncated_parser_failure(tmp_path: Path) -> None:
+    _mock_ready()
+    raw = _chat_response('{"technologies":[', finish_reason="length")
+    respx.post("http://vllm.local/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json=raw)
+    )
+    result = await LocalVLLMRFGPTAdapter(_settings()).analyze(_request(_png(tmp_path / "a.png")))
+    assert result.status == "parser_failed"
+    assert result.parser_valid is False
+    assert result.technologies == []
+    assert result.signals == []
+    assert result.quality_flags == ["parser_failed", "truncated_output"]
+    assert "JSONDecodeError" not in result.quality_flags
     assert json.loads(result.raw_response) == raw
 
 

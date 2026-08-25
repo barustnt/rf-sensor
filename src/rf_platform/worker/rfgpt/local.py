@@ -23,14 +23,17 @@ from rf_platform.contracts.analysis import (
     TechnologyFinding,
 )
 
-PROMPT_VERSION = "technology-detection-v1"
-RESPONSE_SCHEMA_NAME = "rfgpt_analysis_v1"
+PROMPT_VERSION = "technology-detection-primary-v2"
+RESPONSE_SCHEMA_NAME = "rfgpt_analysis_primary_v2"
 SYSTEM_PROMPT = """You are RF-GPT running inside a local authorized RF monitoring system.
-Return only constrained JSON. Treat a spectrogram as one RF observation, not proof of identity.
+Return compact single-line JSON only: no Markdown, no preamble, no trailing prose.
+Treat the spectrogram as one RF observation, not proof of identity.
+Report at most one primary technology finding and at most one primary signal finding.
+Do not duplicate findings.
 Never identify a person, never claim cheating, and never infer payload contents. If evidence is
-insufficient, say so in the JSON fields rather than inventing labels or confidence scores."""
+insufficient, use empty arrays and concise limitations instead of inventing labels or scores."""
 
-USER_PROMPT_TEMPLATE = """Analyze the attached lossless PNG RF spectrogram.
+USER_PROMPT_TEMPLATE = """Analyze the attached lossless PNG RF spectrogram as one image.
 
 Capture context:
 - capture_id: {capture_id}
@@ -43,20 +46,20 @@ Capture context:
 - profile_id: {profile_id}
 - preprocessing_version: {preprocessing_version}
 
-Respond with exactly one JSON object:
+Respond with one compact single-line JSON object only, matching this shape:
 {{
   "technologies": [
     {{
-      "label": "candidate technology label or observable RF class",
+      "label": "one primary candidate technology or observable RF class",
       "model_score": null,
-      "observation": "short RF-only observation with visible spectrogram evidence",
-      "evidence": ["capture_id:{capture_id}", "preprocessing:{preprocessing_version}"]
+      "observation": "concise RF-only evidence",
+      "evidence": ["capture_id:{capture_id}"]
     }}
   ],
   "signals": [
     {{
-      "label": "optional signal descriptor",
-      "observation": "RF-only observation",
+      "label": "one primary signal descriptor",
+      "observation": "concise RF-only evidence",
       "frequency_start_hz": null,
       "frequency_end_hz": null,
       "evidence": ["capture_id:{capture_id}"]
@@ -66,8 +69,9 @@ Respond with exactly one JSON object:
   "quality_flags": []
 }}
 
-Use null for model_score unless the model explicitly provides a calibrated numeric value. Do not
-invent confidence scores, people, device owners, identities, payloads, or disciplinary claims."""
+Rules: use at most one item in technologies and at most one item in signals; no duplicate findings;
+observations must be concise; use null for model_score unless calibrated; do not invent confidence
+scores, people, device owners, identities, payloads, or disciplinary claims."""
 
 RF_GPT_ANALYSIS_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -76,22 +80,22 @@ RF_GPT_ANALYSIS_SCHEMA: dict[str, Any] = {
         "technologies": {
             "type": "array",
             "minItems": 0,
-            "maxItems": 3,
+            "maxItems": 1,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
-                    "label": {"type": "string", "minLength": 1, "maxLength": 80},
+                    "label": {"type": "string", "minLength": 1, "maxLength": 64},
                     "model_score": {
                         "type": ["number", "null"],
                         "minimum": 0,
                         "maximum": 1,
                     },
-                    "observation": {"type": "string", "minLength": 1, "maxLength": 320},
+                    "observation": {"type": "string", "minLength": 1, "maxLength": 160},
                     "evidence": {
                         "type": "array",
                         "minItems": 0,
-                        "maxItems": 5,
+                        "maxItems": 2,
                         "items": {"type": "string", "maxLength": 160},
                     },
                 },
@@ -101,13 +105,13 @@ RF_GPT_ANALYSIS_SCHEMA: dict[str, Any] = {
         "signals": {
             "type": "array",
             "minItems": 0,
-            "maxItems": 4,
+            "maxItems": 1,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
-                    "label": {"type": "string", "minLength": 1, "maxLength": 80},
-                    "observation": {"type": "string", "minLength": 1, "maxLength": 320},
+                    "label": {"type": "string", "minLength": 1, "maxLength": 64},
+                    "observation": {"type": "string", "minLength": 1, "maxLength": 160},
                     "frequency_start_hz": {
                         "type": ["integer", "null"],
                         "minimum": 0,
@@ -119,7 +123,7 @@ RF_GPT_ANALYSIS_SCHEMA: dict[str, Any] = {
                     "evidence": {
                         "type": "array",
                         "minItems": 0,
-                        "maxItems": 5,
+                        "maxItems": 2,
                         "items": {"type": "string", "maxLength": 160},
                     },
                 },
@@ -132,11 +136,11 @@ RF_GPT_ANALYSIS_SCHEMA: dict[str, Any] = {
                 ],
             },
         },
-        "overall_assessment": {"type": "string", "minLength": 1, "maxLength": 600},
+        "overall_assessment": {"type": "string", "minLength": 1, "maxLength": 240},
         "quality_flags": {
             "type": "array",
             "minItems": 0,
-            "maxItems": 8,
+            "maxItems": 2,
             "items": {"type": "string", "maxLength": 80},
         },
     },
@@ -300,7 +304,20 @@ class LocalVLLMRFGPTAdapter:
             raise VLLMHTTPError(response.status_code, raw_response)
         completed = utc_now()
         latency_ms = max(1, int((time.perf_counter() - t0) * 1000))
-        content = self._message_content(raw_response)
+        content, finish_reason = self._message_content_and_finish_reason(raw_response)
+        if finish_reason == "length":
+            return self._parser_failed_result(
+                request=request,
+                raw_response=raw_response,
+                started_at_utc=started,
+                completed_at_utc=completed,
+                latency_ms=latency_ms,
+                quality_flags=["parser_failed", "truncated_output"],
+                overall_assessment=(
+                    "Model output reached the completion-token limit; raw response retained and "
+                    "no trusted findings generated."
+                ),
+            )
         return self._analysis_from_content(
             request=request,
             raw_response=raw_response,
@@ -381,30 +398,51 @@ class LocalVLLMRFGPTAdapter:
                 inference_parameters=self._inference_parameters(request),
             )
         except Exception as exc:
-            return AnalysisResult(
-                analysis_id=new_id(),
-                capture_id=request.capture_id,
-                model=ModelIdentity(
-                    name=self.settings.rfgpt_model_name,
-                    version=self.settings.rfgpt_model_version,
-                    adapter="vllm",
-                    prompt_version=request.prompt_version,
-                ),
-                status="parser_failed",
+            return self._parser_failed_result(
+                request=request,
+                raw_response=raw_response,
                 started_at_utc=started_at_utc,
                 completed_at_utc=completed_at_utc,
                 latency_ms=latency_ms,
-                technologies=[],
-                signals=[],
+                quality_flags=["parser_failed", exc.__class__.__name__],
                 overall_assessment=(
                     "Parser failed; raw model response retained and no trusted findings generated."
                 ),
-                quality_flags=["parser_failed", exc.__class__.__name__],
-                parser_valid=False,
-                raw_response=raw_response,
-                preprocessing_version=request.preprocessing_version,
-                inference_parameters=self._inference_parameters(request),
             )
+
+    def _parser_failed_result(
+        self,
+        *,
+        request: AnalysisRequest,
+        raw_response: str,
+        started_at_utc: datetime,
+        completed_at_utc: datetime,
+        latency_ms: int,
+        quality_flags: list[str],
+        overall_assessment: str,
+    ) -> AnalysisResult:
+        return AnalysisResult(
+            analysis_id=new_id(),
+            capture_id=request.capture_id,
+            model=ModelIdentity(
+                name=self.settings.rfgpt_model_name,
+                version=self.settings.rfgpt_model_version,
+                adapter="vllm",
+                prompt_version=request.prompt_version,
+            ),
+            status="parser_failed",
+            started_at_utc=started_at_utc,
+            completed_at_utc=completed_at_utc,
+            latency_ms=latency_ms,
+            technologies=[],
+            signals=[],
+            overall_assessment=overall_assessment,
+            quality_flags=quality_flags,
+            parser_valid=False,
+            raw_response=raw_response,
+            preprocessing_version=request.preprocessing_version,
+            inference_parameters=self._inference_parameters(request),
+        )
 
     def _chat_payload(self, request: AnalysisRequest, data_url: str) -> dict[str, Any]:
         user_prompt = USER_PROMPT_TEMPLATE.format(
@@ -486,11 +524,13 @@ class LocalVLLMRFGPTAdapter:
         return f"data:image/png;base64,{encoded}"
 
     @staticmethod
-    def _message_content(raw_response: str) -> str:
+    def _message_content_and_finish_reason(raw_response: str) -> tuple[str, str | None]:
         try:
             payload = json.loads(raw_response)
             choices = payload["choices"]
-            content = choices[0]["message"]["content"]
+            choice = choices[0]
+            finish_reason = choice.get("finish_reason")
+            content = choice["message"]["content"]
         except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
             raise VLLMMalformedResponseError(
                 "vLLM chat completion response is malformed",
@@ -501,7 +541,7 @@ class LocalVLLMRFGPTAdapter:
                 "vLLM message content is not text",
                 raw_response=raw_response,
             )
-        return content
+        return content, str(finish_reason) if finish_reason is not None else None
 
     @staticmethod
     def _model_ids(payload: dict[str, Any]) -> list[str]:

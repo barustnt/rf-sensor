@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     rfgpt_temperature: float = 0.0
     rfgpt_top_p: float = 1.0
     rfgpt_repetition_penalty: float = 1.05
-    rfgpt_max_output_tokens: int = 192
+    rfgpt_max_output_tokens: int = 224
     worker_max_attempts: int = 5
     worker_concurrency: int = 1
 

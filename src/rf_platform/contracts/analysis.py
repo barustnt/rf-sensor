@@ -68,7 +68,7 @@ class AnalysisRequest(VersionedContract):
     gain_db: float | None = None
     profile_id: str | None = None
     preprocessing_version: str | None = None
-    prompt_version: str = "technology-detection-v1"
+    prompt_version: str = "technology-detection-primary-v2"
 
 
 class ModelHealth(VersionedContract):
