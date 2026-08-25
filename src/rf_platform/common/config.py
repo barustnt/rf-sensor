@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     rfgpt_endpoint: str = Field(default="http://localhost:8090")
     rfgpt_conda_env: str = ""
     rfgpt_request_timeout_seconds: int = 120
+    rfgpt_health_timeout_seconds: float = 2.0
+    rfgpt_temperature: float = 0.0
+    rfgpt_top_p: float = 1.0
+    rfgpt_repetition_penalty: float = 1.0
+    rfgpt_max_output_tokens: int = 512
     worker_max_attempts: int = 5
     worker_concurrency: int = 1
 
@@ -88,13 +93,35 @@ class Settings(BaseSettings):
             raise ValueError("Milestone 1 supports only filesystem artifact storage")
         return value
 
+    @field_validator("rfgpt_adapter")
+    @classmethod
+    def validate_rfgpt_adapter(cls, value: str) -> str:
+        allowed = {"mock", "local", "vllm"}
+        if value not in allowed:
+            raise ValueError(f"unsupported RF-GPT adapter: {value}")
+        return value
+
     @field_validator("worker_concurrency")
     @classmethod
     def validate_worker_concurrency(cls, value: int) -> int:
         if value < 1:
             raise ValueError("worker concurrency must be at least 1")
         if value != 1:
-            raise ValueError("Milestone 1 worker concurrency is limited to 1")
+            raise ValueError("worker concurrency is limited to 1 for the current milestones")
+        return value
+
+    @field_validator("rfgpt_temperature", "rfgpt_top_p", "rfgpt_repetition_penalty")
+    @classmethod
+    def validate_non_negative_float(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("RF-GPT inference parameters must be non-negative")
+        return value
+
+    @field_validator("rfgpt_max_output_tokens")
+    @classmethod
+    def validate_max_output_tokens(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("RF-GPT maximum output tokens must be positive")
         return value
 
     def require_sensor_token(self) -> SecretStr:

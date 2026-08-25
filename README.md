@@ -1,11 +1,8 @@
 # RF Intelligence Platform
 
-Milestones 0-2 implement a simulated end-to-end RF intelligence slice plus operational
-dashboard hardening: simulated sensor, FastAPI backend, PostgreSQL, NATS JetStream,
-filesystem artifacts, a mock RF-GPT worker, Gradio dashboard, historical query API,
-filtering/pagination, audited operator actions, retry controls, storage trends, metrics,
-report-only retention, and backup/restore procedures. Real Pluto+, USRP B210, and real RF-GPT
-integration remain out of scope.
+Milestones 0-3 implement a simulated end-to-end RF intelligence slice, operational dashboard
+hardening, canonical Atheer/Hann preprocessing, and a local vLLM RF-GPT adapter. Real Pluto+
+and USRP B210 sensor adapters remain out of scope.
 
 ## Environment
 
@@ -34,6 +31,7 @@ make sensor-sim
 make dashboard
 make demo
 conda run -n rf-intel python scripts/run_milestone2_acceptance.py
+conda run -n rf-intel python scripts/run_real_model_smoke.py  # requires a running local vLLM
 make check
 make infra-down
 ```
@@ -46,13 +44,14 @@ dashboard and reliability acceptance flow, including disposable backup/restore v
 
 Sensors talk only to the API. The dashboard talks only to the API. The worker consumes durable
 JetStream jobs and writes validated model observations to PostgreSQL. RF-GPT is hidden behind an
-adapter boundary; the current milestones use only the deterministic mock adapter with version
-`mock-v1`.
+adapter boundary: the deterministic mock adapter remains available as `mock-v1`, and Milestone 3
+adds an optional local vLLM adapter configured entirely through environment variables.
 
 ## Operations
 
-Retention is report-only in Milestone 2 and does not delete data. PostgreSQL and artifact
-backup/restore steps are documented in `docs/backup-restore.md`.
+Retention is report-only and does not delete data. PostgreSQL and artifact backup/restore steps
+are documented in `docs/backup-restore.md`. Local RF-GPT/vLLM launch and smoke-test procedures are
+documented in `docs/rfgpt-runtime.md`.
 
 ## Safety notes
 

@@ -30,3 +30,16 @@ verification command is:
 ```bash
 conda run -n rf-intel python scripts/verify_backup_restore.py
 ```
+
+## Milestone 3 local RF-GPT
+
+- Use `docs/rf-preprocessing.md` for the canonical `atheer-hann-v1` preprocessing pipeline.
+- Use `docs/rfgpt-runtime.md` to launch the local-only vLLM server in `vllm-env`.
+- Keep model paths and weights outside Git and supply `RF_RFGPT_MODEL_PATH` only through an
+  untracked local environment file.
+- The worker still runs with `RF_WORKER_CONCURRENCY=1`.
+- The real-model smoke test is manual and requires an already-running vLLM endpoint:
+
+```bash
+conda run -n rf-intel python scripts/run_real_model_smoke.py
+```

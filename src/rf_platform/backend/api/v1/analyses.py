@@ -43,6 +43,8 @@ def _run_to_dict(run: models.ModelRun) -> dict[str, object]:
         "signals": structured.get("signals", []),
         "overall_assessment": structured.get("overall_assessment"),
         "quality_flags": structured.get("quality_flags", []),
+        "preprocessing_version": structured.get("preprocessing_version"),
+        "inference_parameters": structured.get("inference_parameters", {}),
         "raw_response": run.raw_response,
         "parser_valid": run.parser_valid,
         "started_at_utc": run.started_at_utc.isoformat(),

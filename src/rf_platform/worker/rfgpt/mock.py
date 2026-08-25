@@ -64,4 +64,11 @@ class MockRFGPTAdapter:
             quality_flags=[],
             parser_valid=True,
             raw_response=json.dumps(raw, sort_keys=True),
+            preprocessing_version=request.preprocessing_version,
+            inference_parameters={
+                "adapter": "mock",
+                "prompt_version": request.prompt_version,
+                "model_version": self.settings.rfgpt_model_version,
+                "preprocessing_version": request.preprocessing_version,
+            },
         )

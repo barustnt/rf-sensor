@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from datetime import timedelta
 from typing import Any
 
@@ -11,6 +12,7 @@ from rf_platform.backend.services.ingestion import job_summary
 from rf_platform.backend.services.registry import derive_operational_status
 from rf_platform.common.config import Settings
 from rf_platform.common.time import utc_now
+from rf_platform.worker.rfgpt.local import LocalVLLMRFGPTAdapter
 
 
 def percentile(values: list[int], pct: float) -> int | None:
@@ -56,6 +58,7 @@ async def operational_metrics(
         await session.execute(select(func.coalesce(func.sum(models.Artifact.byte_size), 0)))
     ).scalar_one()
     oldest_pending = jobs.get("oldest_pending_at_utc")
+    model_health = await _model_health(settings)
     return {
         "timestamp_utc": now.isoformat(),
         "requests": request_metrics or {"count": 0, "avg_latency_ms": None, "by_status": {}},
@@ -81,5 +84,53 @@ async def operational_metrics(
             "adapter": settings.rfgpt_adapter,
             "model_name": settings.rfgpt_model_name,
             "model_version": settings.rfgpt_model_version,
+            "health": model_health,
         },
+        "gpu": gpu_metrics(),
     }
+
+
+async def _model_health(settings: Settings) -> dict[str, Any]:
+    if settings.rfgpt_adapter == "vllm":
+        return (await LocalVLLMRFGPTAdapter(settings).health()).model_dump(mode="json")
+    return {
+        "adapter": settings.rfgpt_adapter,
+        "ready": settings.rfgpt_adapter == "mock",
+        "model_name": settings.rfgpt_model_name,
+        "model_version": settings.rfgpt_model_version,
+        "message": "mock adapter ready" if settings.rfgpt_adapter == "mock" else "not checked",
+        "details": {},
+    }
+
+
+def gpu_metrics() -> dict[str, Any]:
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.total,memory.free,memory.used,temperature.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {"available": False, "message": "nvidia-smi unavailable"}
+    line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+    parts = [part.strip() for part in line.split(",")]
+    if len(parts) != 5:
+        return {"available": False, "message": "unexpected nvidia-smi output"}
+    name, total, free, used, temp = parts
+    try:
+        return {
+            "available": True,
+            "name": name,
+            "memory_total_mib": int(total),
+            "memory_free_mib": int(free),
+            "memory_used_mib": int(used),
+            "temperature_c": int(temp),
+        }
+    except ValueError:
+        return {"available": False, "message": "unexpected nvidia-smi numeric output"}

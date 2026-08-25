@@ -14,6 +14,7 @@ from rf_platform.common.time import utc_now
 from rf_platform.contracts.analysis import AnalysisRequest
 from rf_platform.worker.correlation import correlate_result
 from rf_platform.worker.rfgpt.base import RFGPTAdapter
+from rf_platform.worker.rfgpt.local import RFGPTAdapterError
 from rf_platform.worker.validation import validate_analysis_result
 
 
@@ -89,14 +90,29 @@ class WorkerProcessor:
             job.updated_at_utc = utc_now()
             await session.commit()
 
+        artifact_path = self.store.open(artifact.object_key)
         request = AnalysisRequest(
             job_id=job_id,
             capture_id=str(payload["capture_id"]),
             artifact_keys=[artifact.object_key],
+            artifact_paths=[artifact_path],
+            sensor_id=capture.sensor_id,
+            capture_started_at_utc=capture.started_at_utc,
+            center_frequency_hz=capture.radio.get("center_frequency_hz"),
+            sample_rate_sps=capture.radio.get("sample_rate_sps"),
+            bandwidth_hz=capture.radio.get("bandwidth_hz"),
+            gain_db=capture.radio.get("gain_db"),
+            profile_id=capture.profile_id,
+            preprocessing_version=capture.preprocessing.get("pipeline_version"),
             prompt_version=str(payload.get("prompt_version", "technology-detection-v1")),
         )
         try:
             result = validate_analysis_result(await self.adapter.analyze(request))
+        except RFGPTAdapterError as exc:
+            await self._record_adapter_failure(
+                sessionmaker=self.sessionmaker, job_id=job_id, exc=exc
+            )
+            return "failed"
         except Exception as exc:
             async with self.sessionmaker() as session:
                 job = await session.get(models.AnalysisJob, job_id)
@@ -157,7 +173,8 @@ class WorkerProcessor:
                     )
                 )
                 await session.flush()
-                for finding in result.technologies:
+                trusted_findings = result.technologies if result.parser_valid else []
+                for finding in trusted_findings:
                     session.add(
                         models.ModelFinding(
                             analysis_id=result.analysis_id,
@@ -169,29 +186,59 @@ class WorkerProcessor:
                             created_at_utc=utc_now(),
                         )
                     )
-                event = await correlate_result(session, capture, result)
+                event = (
+                    await correlate_result(session, capture, result)
+                    if result.status == "succeeded" and result.parser_valid
+                    else None
+                )
             else:
                 event = None
-            job.status = "succeeded"
+            if result.status == "succeeded" and result.parser_valid:
+                job.status = "succeeded"
+                job.error_category = None
+                job.error_message = None
+                event_type = "analysis_completed"
+                severity = "info"
+                message = f"Analysis job {job.job_id} completed"
+                outcome = "succeeded"
+            else:
+                job.status = "failed"
+                job.error_category = "parser_failure"
+                job.error_message = "RF-GPT output failed constrained JSON parsing"
+                event_type = "analysis_parser_failed"
+                severity = "error"
+                message = f"Analysis job {job.job_id} produced parser-invalid output"
+                outcome = "failed"
             job.completed_at_utc = result.completed_at_utc
             job.updated_at_utc = utc_now()
             session.add(
                 models.SystemEvent(
-                    severity="info",
+                    severity=severity,
                     service="worker",
-                    event_type="analysis_completed",
-                    message=f"Analysis job {job.job_id} completed",
+                    event_type=event_type,
+                    message=message,
                     sensor_id=capture.sensor_id,
                     correlation_id=capture.correlation_id,
-                    context={"analysis_id": result.analysis_id, "capture_id": capture.capture_id},
+                    context={
+                        "analysis_id": result.analysis_id,
+                        "capture_id": capture.capture_id,
+                        "parser_valid": result.parser_valid,
+                        "preprocessing_version": result.preprocessing_version,
+                        "inference_parameters": result.inference_parameters,
+                    },
                     timestamp_utc=utc_now(),
                 )
             )
             await session.commit()
-            await self.bus.publish(
-                ANALYSIS_COMPLETED,
-                {"schema_version": "1.0", "job_id": job.job_id, "analysis_id": result.analysis_id},
-            )
+            if result.status == "succeeded" and result.parser_valid:
+                await self.bus.publish(
+                    ANALYSIS_COMPLETED,
+                    {
+                        "schema_version": "1.0",
+                        "job_id": job.job_id,
+                        "analysis_id": result.analysis_id,
+                    },
+                )
             if event is not None:
                 await self.bus.publish(
                     EVENT_CREATED,
@@ -201,7 +248,47 @@ class WorkerProcessor:
                         "analysis_id": result.analysis_id,
                     },
                 )
-        return "succeeded"
+        return outcome
+
+    async def _record_adapter_failure(
+        self,
+        sessionmaker: async_sessionmaker[AsyncSession],
+        job_id: str,
+        exc: RFGPTAdapterError,
+    ) -> None:
+        async with sessionmaker() as session:
+            job = await session.get(models.AnalysisJob, job_id)
+            if job is None:
+                return
+            if exc.retryable and job.attempt_count >= self.settings.worker_max_attempts:
+                job.status = "deadletter"
+                await self.bus.publish(DEADLETTER, {"job_id": job_id, "error": str(exc)})
+            else:
+                job.status = "failed" if exc.retryable else "deadletter"
+                if not exc.retryable:
+                    await self.bus.publish(DEADLETTER, {"job_id": job_id, "error": str(exc)})
+            job.error_category = exc.category
+            job.error_message = f"{exc.__class__.__name__}: {exc}"
+            job.completed_at_utc = utc_now()
+            job.updated_at_utc = utc_now()
+            session.add(
+                models.SystemEvent(
+                    severity="error",
+                    service="worker",
+                    event_type="analysis_failed",
+                    message=f"Analysis job {job_id} failed",
+                    sensor_id=None,
+                    correlation_id=None,
+                    context={
+                        "job_id": job_id,
+                        "error": job.error_message,
+                        "category": exc.category,
+                        "retryable": exc.retryable,
+                    },
+                    timestamp_utc=utc_now(),
+                )
+            )
+            await session.commit()
 
     async def _fail_job(
         self,

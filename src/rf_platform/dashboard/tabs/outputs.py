@@ -100,6 +100,7 @@ def render_output_detail(client: DashboardApiClient, analysis_id: str) -> str:
     quality_text = (
         ", ".join(str(item) for item in quality_flags) if quality_flags else "None reported."
     )
+    inference_parameters = detail.get("inference_parameters", {})
     return f"""## RF-GPT Output Detail
 
 - **Analysis ID:** `{detail.get("analysis_id")}`
@@ -115,6 +116,7 @@ def render_output_detail(client: DashboardApiClient, analysis_id: str) -> str:
 - **Quality flags:** {quality_text}
 - **Radio settings:** `{capture.get("radio")}`
 - **Preprocessing:** `{(capture.get("preprocessing") or {}).get("pipeline_version")}`
+- **Inference parameters:** `{inference_parameters}`
 
 ### Spectrogram preview
 {preview_text}

@@ -8,7 +8,7 @@ endif
 CONDA_ENV ?= rf-intel
 COMPOSE ?= docker compose -f deploy/docker-compose.infra.yml --project-name rf-sensor
 
-.PHONY: help install infra-up infra-down migrate seed api worker sensor-sim dashboard demo m2-acceptance backup-restore-check format lint typecheck test check
+.PHONY: help install infra-up infra-down migrate seed api worker sensor-sim dashboard demo m2-acceptance m3-real-smoke backup-restore-check format lint typecheck test check
 
 help: ## Show commands
 	@awk 'BEGIN {FS = ":.*##"; printf "Available targets:\n"} /^[a-zA-Z_-]+:.*##/ {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -45,6 +45,9 @@ demo: ## Run simulated end-to-end acceptance demo
 
 m2-acceptance: ## Run Milestone 2 operational acceptance flow
 	$(PYTHON) scripts/run_milestone2_acceptance.py
+
+m3-real-smoke: ## Manually run one real local vLLM RF-GPT smoke test
+	$(PYTHON) scripts/run_real_model_smoke.py
 
 backup-restore-check: ## Verify PostgreSQL and artifact backup/restore
 	$(PYTHON) scripts/verify_backup_restore.py

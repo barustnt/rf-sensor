@@ -1,0 +1,114 @@
+# Local RF-GPT vLLM runtime
+
+Milestone 3 integrates RF-GPT through a local vLLM OpenAI-compatible HTTP endpoint. The platform
+runs in Conda environment `rf-intel`; the VLM server runs separately in `vllm-env`.
+
+## Recorded local runtime facts
+
+- Invocation mechanism: local-only vLLM OpenAI-compatible HTTP API.
+- Endpoint: configure `RF_RFGPT_ENDPOINT=http://127.0.0.1:8090/v1`.
+- Served model name: `rfgpt`.
+- Model version recorded by the platform: `Qwen2.5-VL-7B-rfa-wtr-v2-joint`.
+- Model path: supplied locally through an untracked environment file as `RF_RFGPT_MODEL_PATH`.
+- Model architecture: `Qwen2_5_VLForConditionalGeneration`.
+- Weights: BF16, four shards, approximately 15.45 GiB.
+- GPU: RTX 4090 Laptop GPU, approximately 16 GiB VRAM.
+- Measured before implementation on 2026-08-25: 16,376 MiB total, 15,960 MiB free,
+  15 MiB used, 45 C.
+- vLLM environment versions observed: `vllm==0.19.0`, `transformers==4.57.6`,
+  `torch==2.10.0`.
+- Runtime uses CPU offload and worker concurrency 1.
+- Known approximate direct-inference latency: 49 seconds for a single image.
+- Preprocessing: `atheer-hann-v1`, documented in `docs/rf-preprocessing.md`.
+- Prompt contract: `technology-detection-v1`, constrained JSON with no identity or cheating claims.
+- Timeout: set `RF_RFGPT_REQUEST_TIMEOUT_SECONDS=300`.
+
+Do not put the model directory or any model weights inside the repository.
+
+## Untracked local environment
+
+Create a local file that is ignored by Git, for example `.env.rfgpt.local`:
+
+```bash
+export RF_RFGPT_MODEL_PATH="/local/untracked/model/path"
+export RF_RFGPT_ADAPTER=vllm
+export RF_RFGPT_ENDPOINT=http://127.0.0.1:8090/v1
+export RF_RFGPT_MODEL_NAME=rfgpt
+export RF_RFGPT_MODEL_VERSION=Qwen2.5-VL-7B-rfa-wtr-v2-joint
+export RF_RFGPT_REQUEST_TIMEOUT_SECONDS=300
+export RF_WORKER_CONCURRENCY=1
+```
+
+Use the actual local model path on the machine that owns the model. Do not commit that file.
+
+## Validated local-only launch command
+
+Run this from a shell where `RF_RFGPT_MODEL_PATH` is set and `vllm-env` is active:
+
+```bash
+HF_HUB_OFFLINE=1 \
+TRANSFORMERS_OFFLINE=1 \
+CUDA_VISIBLE_DEVICES=0 \
+vllm serve "${RF_RFGPT_MODEL_PATH}" \
+  --served-model-name rfgpt \
+  --host 127.0.0.1 \
+  --port 8090 \
+  --dtype bfloat16 \
+  --gpu-memory-utilization 0.80 \
+  --cpu-offload-gb 10 \
+  --max-model-len 2048 \
+  --max-num-seqs 1 \
+  --enforce-eager \
+  --limit-mm-per-prompt '{"image":1,"video":0}'
+```
+
+Expected startup time is several minutes because the BF16 shards must be loaded and CPU offload
+initialized. Keep the endpoint bound to `127.0.0.1`.
+
+## Health checks
+
+```bash
+curl -fsS http://127.0.0.1:8090/health
+curl -fsS http://127.0.0.1:8090/v1/models
+```
+
+The platform adapter checks both endpoints and verifies that `rfgpt` is present in `/v1/models`.
+
+## GPU and CPU offload behavior
+
+The RTX 4090 Laptop GPU has limited VRAM for this model. The validated command uses:
+
+- `--gpu-memory-utilization 0.80` to leave headroom for the desktop and platform processes;
+- `--cpu-offload-gb 10` to keep the model usable on approximately 16 GiB VRAM;
+- `--max-num-seqs 1` plus platform `RF_WORKER_CONCURRENCY=1` for single-image inference.
+
+Monitor with:
+
+```bash
+nvidia-smi
+```
+
+## Tokenizer fix requirement
+
+The local model's `tokenizer_config.json` must already contain `fix_mistral_regex=true`. Milestone 3
+does not modify tokenizer files, model weights, or any files under the model directory.
+
+## Shutdown
+
+Stop the `vllm serve` process with `Ctrl-C` in its terminal. Wait for the process to exit, then
+confirm GPU memory is released:
+
+```bash
+nvidia-smi
+```
+
+## Troubleshooting
+
+- OOM or CUDA allocation failure: confirm no other GPU process is using VRAM, keep
+  `--max-num-seqs 1`, reduce `--gpu-memory-utilization`, or increase CPU offload.
+- Timeout: confirm the platform uses `RF_RFGPT_REQUEST_TIMEOUT_SECONDS=300`; first requests may be
+  slower after startup.
+- Unavailable endpoint: verify `/health`, `/v1/models`, host `127.0.0.1`, port `8090`, and that
+  `RF_RFGPT_ENDPOINT` ends with `/v1`.
+- Invalid output: the adapter stores the raw response, marks `parser_valid=false`, creates no
+  trusted findings, and classifies the job as a parser failure.
