@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import time
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ from rf_platform.contracts.analysis import (
 )
 
 PROMPT_VERSION = "technology-detection-v1"
+RESPONSE_SCHEMA_NAME = "rfgpt_analysis_v1"
 SYSTEM_PROMPT = """You are RF-GPT running inside a local authorized RF monitoring system.
 Return only constrained JSON. Treat a spectrogram as one RF observation, not proof of identity.
 Never identify a person, never claim cheating, and never infer payload contents. If evidence is
@@ -67,17 +69,108 @@ Respond with exactly one JSON object:
 Use null for model_score unless the model explicitly provides a calibrated numeric value. Do not
 invent confidence scores, people, device owners, identities, payloads, or disciplinary claims."""
 
+RF_GPT_ANALYSIS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "technologies": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 3,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "label": {"type": "string", "minLength": 1, "maxLength": 80},
+                    "model_score": {
+                        "type": ["number", "null"],
+                        "minimum": 0,
+                        "maximum": 1,
+                    },
+                    "observation": {"type": "string", "minLength": 1, "maxLength": 320},
+                    "evidence": {
+                        "type": "array",
+                        "minItems": 0,
+                        "maxItems": 5,
+                        "items": {"type": "string", "maxLength": 160},
+                    },
+                },
+                "required": ["label", "model_score", "observation", "evidence"],
+            },
+        },
+        "signals": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 4,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "label": {"type": "string", "minLength": 1, "maxLength": 80},
+                    "observation": {"type": "string", "minLength": 1, "maxLength": 320},
+                    "frequency_start_hz": {
+                        "type": ["integer", "null"],
+                        "minimum": 0,
+                    },
+                    "frequency_end_hz": {
+                        "type": ["integer", "null"],
+                        "minimum": 0,
+                    },
+                    "evidence": {
+                        "type": "array",
+                        "minItems": 0,
+                        "maxItems": 5,
+                        "items": {"type": "string", "maxLength": 160},
+                    },
+                },
+                "required": [
+                    "label",
+                    "observation",
+                    "frequency_start_hz",
+                    "frequency_end_hz",
+                    "evidence",
+                ],
+            },
+        },
+        "overall_assessment": {"type": "string", "minLength": 1, "maxLength": 600},
+        "quality_flags": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 8,
+            "items": {"type": "string", "maxLength": 80},
+        },
+    },
+    "required": ["technologies", "signals", "overall_assessment", "quality_flags"],
+}
+
+RFGPT_RESPONSE_FORMAT: dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": RESPONSE_SCHEMA_NAME,
+        "strict": True,
+        "schema": RF_GPT_ANALYSIS_SCHEMA,
+    },
+}
+
 
 class RFGPTAdapterError(RuntimeError):
     category = "model_failure"
     retryable = True
 
-    def __init__(self, message: str, *, category: str | None = None, retryable: bool | None = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        category: str | None = None,
+        retryable: bool | None = None,
+        raw_response: str | None = None,
+    ) -> None:
         super().__init__(message)
         if category is not None:
             self.category = category
         if retryable is not None:
             self.retryable = retryable
+        self.raw_response = raw_response
 
 
 class VLLMTimeoutError(RFGPTAdapterError):
@@ -97,6 +190,7 @@ class VLLMHTTPError(RFGPTAdapterError):
         super().__init__(
             f"vLLM HTTP {status_code}",
             retryable=status_code >= 500,
+            raw_response=body,
         )
         self.status_code = status_code
         self.body = body[:500]
@@ -162,7 +256,14 @@ class LocalVLLMRFGPTAdapter:
                 },
             )
         except httpx.TimeoutException:
-            return self._unready("vLLM health check timed out", "model_timeout", started)
+            return self._unready(
+                self._timeout_message(
+                    "health check",
+                    timeout_seconds=self.settings.rfgpt_health_timeout_seconds,
+                ),
+                "model_timeout",
+                started,
+            )
         except httpx.ConnectError:
             return self._unready("vLLM endpoint is unavailable", "model_unavailable", started)
         except (httpx.HTTPError, json.JSONDecodeError, VLLMMalformedResponseError) as exc:
@@ -184,7 +285,12 @@ class LocalVLLMRFGPTAdapter:
             ) as client:
                 response = await client.post(self._openai_url("chat/completions"), json=payload)
         except httpx.TimeoutException as exc:
-            raise VLLMTimeoutError("vLLM request timed out") from exc
+            raise VLLMTimeoutError(
+                self._timeout_message(
+                    "chat completion request",
+                    timeout_seconds=self.settings.rfgpt_request_timeout_seconds,
+                )
+            ) from exc
         except httpx.ConnectError as exc:
             raise VLLMConnectionError("vLLM endpoint is unavailable") from exc
         except httpx.HTTPError as exc:
@@ -210,7 +316,12 @@ class LocalVLLMRFGPTAdapter:
                 health_response = await client.get(self._health_url())
                 models_response = await client.get(self._openai_url("models"))
             except httpx.TimeoutException as exc:
-                raise VLLMTimeoutError("vLLM health check timed out") from exc
+                raise VLLMTimeoutError(
+                    self._timeout_message(
+                        "health/model discovery",
+                        timeout_seconds=self.settings.rfgpt_health_timeout_seconds,
+                    )
+                ) from exc
             except httpx.ConnectError as exc:
                 raise VLLMConnectionError("vLLM endpoint is unavailable") from exc
         if health_response.status_code != 200:
@@ -318,8 +429,8 @@ class LocalVLLMRFGPTAdapter:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": user_prompt},
                         {"type": "image_url", "image_url": {"url": data_url}},
+                        {"type": "text", "text": user_prompt},
                     ],
                 },
             ],
@@ -327,6 +438,7 @@ class LocalVLLMRFGPTAdapter:
             "top_p": self.settings.rfgpt_top_p,
             "repetition_penalty": self.settings.rfgpt_repetition_penalty,
             "max_tokens": self.settings.rfgpt_max_output_tokens,
+            "response_format": deepcopy(RFGPT_RESPONSE_FORMAT),
         }
 
     def _inference_parameters(self, request: AnalysisRequest) -> dict[str, Any]:
@@ -340,6 +452,7 @@ class LocalVLLMRFGPTAdapter:
             "user_prompt_version": PROMPT_VERSION,
             "model_version": self.settings.rfgpt_model_version,
             "preprocessing_version": request.preprocessing_version,
+            "response_schema": RESPONSE_SCHEMA_NAME,
         }
 
     def _validate_request_context(self, request: AnalysisRequest) -> None:
@@ -379,9 +492,15 @@ class LocalVLLMRFGPTAdapter:
             choices = payload["choices"]
             content = choices[0]["message"]["content"]
         except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
-            raise VLLMMalformedResponseError("vLLM chat completion response is malformed") from exc
+            raise VLLMMalformedResponseError(
+                "vLLM chat completion response is malformed",
+                raw_response=raw_response,
+            ) from exc
         if not isinstance(content, str):
-            raise VLLMMalformedResponseError("vLLM message content is not text")
+            raise VLLMMalformedResponseError(
+                "vLLM message content is not text",
+                raw_response=raw_response,
+            )
         return content
 
     @staticmethod
@@ -411,7 +530,18 @@ class LocalVLLMRFGPTAdapter:
 
     def _redacted_endpoint(self) -> str:
         parts = urlsplit(self.endpoint)
-        return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+        host = parts.hostname or ""
+        netloc = f"{host}:{parts.port}" if parts.port is not None else host
+        return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+
+    def _timeout_message(self, operation: str, *, timeout_seconds: float | int) -> str:
+        return (
+            f"vLLM {operation} timed out; timeout_seconds={timeout_seconds}; "
+            f"max_output_tokens={self.settings.rfgpt_max_output_tokens}; "
+            f"endpoint={self._redacted_endpoint()}; "
+            f"model_name={self.settings.rfgpt_model_name}; "
+            f"model_version={self.settings.rfgpt_model_version}"
+        )
 
     def _unready(self, message: str, category: str, started: float) -> ModelHealth:
         return ModelHealth(

@@ -90,18 +90,31 @@ def _mock_ready() -> None:
     )
 
 
-def test_vllm_configuration_values_are_environment_driven() -> None:
-    settings = _settings(
-        rfgpt_temperature=0,
-        rfgpt_top_p=1,
-        rfgpt_repetition_penalty=1,
-        rfgpt_max_output_tokens=512,
-    )
+def test_vllm_default_generation_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("RF_RFGPT_MAX_OUTPUT_TOKENS", raising=False)
+    monkeypatch.delenv("RF_RFGPT_REPETITION_PENALTY", raising=False)
+
+    settings = _settings()
     assert settings.rfgpt_adapter == "vllm"
     assert settings.rfgpt_endpoint == "http://vllm.local/v1"
     assert settings.rfgpt_model_name == "rfgpt"
     assert settings.rfgpt_request_timeout_seconds == 300
+    assert settings.rfgpt_temperature == 0.0
+    assert settings.rfgpt_top_p == 1.0
+    assert settings.rfgpt_repetition_penalty == 1.05
+    assert settings.rfgpt_max_output_tokens == 192
     assert settings.worker_concurrency == 1
+
+
+def test_vllm_environment_overrides_generation_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RF_RFGPT_REPETITION_PENALTY", "1.2")
+    monkeypatch.setenv("RF_RFGPT_MAX_OUTPUT_TOKENS", "256")
+
+    settings = _settings()
+    assert settings.rfgpt_repetition_penalty == 1.2
+    assert settings.rfgpt_max_output_tokens == 256
 
 
 @pytest.mark.asyncio
@@ -139,19 +152,46 @@ async def test_successful_vllm_response_records_prompt_and_preprocessing(tmp_pat
     assert result.preprocessing_version == "atheer-hann-v1"
     assert result.inference_parameters["temperature"] == 0.0
     assert result.inference_parameters["top_p"] == 1.0
-    assert result.inference_parameters["repetition_penalty"] == 1.0
-    assert result.inference_parameters["max_output_tokens"] == 512
+    assert result.inference_parameters["repetition_penalty"] == 1.05
+    assert result.inference_parameters["max_output_tokens"] == 192
 
     payload = json.loads(chat.calls.last.request.content)
     assert payload["model"] == "rfgpt"
     assert payload["temperature"] == 0.0
-    assert payload["messages"][1]["content"][1]["image_url"]["url"].startswith(
-        "data:image/png;base64,"
-    )
-    prompt = payload["messages"][1]["content"][0]["text"]
+    assert payload["repetition_penalty"] == 1.05
+    assert payload["max_tokens"] == 192
+    user_content = payload["messages"][1]["content"]
+    assert user_content[0]["type"] == "image_url"
+    assert user_content[0]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert user_content[1]["type"] == "text"
+    prompt = user_content[1]["text"]
     assert "sensor-1" in prompt
     assert "atheer-hann-v1" in prompt
     assert "Never identify a person" in payload["messages"][0]["content"]
+    response_format = payload["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["name"] == "rfgpt_analysis_v1"
+    assert response_format["json_schema"]["strict"] is True
+    schema = response_format["json_schema"]["schema"]
+    assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == {
+        "technologies",
+        "signals",
+        "overall_assessment",
+        "quality_flags",
+    }
+    technologies_schema = schema["properties"]["technologies"]
+    signals_schema = schema["properties"]["signals"]
+    assert technologies_schema["maxItems"] == 3
+    assert signals_schema["maxItems"] == 4
+    assert technologies_schema["items"]["additionalProperties"] is False
+    assert signals_schema["items"]["additionalProperties"] is False
+    assert technologies_schema["items"]["properties"]["evidence"]["maxItems"] == 5
+    assert technologies_schema["items"]["properties"]["evidence"]["items"]["maxLength"] == 160
+    assert technologies_schema["items"]["properties"]["label"]["maxLength"] == 80
+    assert technologies_schema["items"]["properties"]["observation"]["maxLength"] == 320
+    assert technologies_schema["items"]["properties"]["model_score"]["type"] == ["number", "null"]
+    assert schema["properties"]["overall_assessment"]["maxLength"] == 600
 
 
 @pytest.mark.asyncio
@@ -165,6 +205,12 @@ async def test_timeout_is_classified(tmp_path: Path) -> None:
         await LocalVLLMRFGPTAdapter(_settings()).analyze(_request(_png(tmp_path / "a.png")))
     assert exc.value.category == "model_timeout"
     assert exc.value.retryable is True
+    message = str(exc.value)
+    assert "timeout_seconds=300" in message
+    assert "max_output_tokens=192" in message
+    assert "endpoint=http://vllm.local/v1" in message
+    assert "model_name=rfgpt" in message
+    assert "model_version=Qwen2.5-VL-7B-rfa-wtr-v2-joint" in message
 
 
 @pytest.mark.asyncio

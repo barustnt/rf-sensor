@@ -19,9 +19,12 @@ runs in Conda environment `rf-intel`; the VLM server runs separately in `vllm-en
   `torch==2.10.0`.
 - Runtime uses CPU offload and worker concurrency 1.
 - Known approximate direct-inference latency: 49 seconds for a single image.
+- Observed CPU-offloaded generation speed is about 1 token/second on the validated local runtime.
 - Preprocessing: `atheer-hann-v1`, documented in `docs/rf-preprocessing.md`.
 - Prompt contract: `technology-detection-v1`, constrained JSON with no identity or cheating claims.
 - Timeout: set `RF_RFGPT_REQUEST_TIMEOUT_SECONDS=300`.
+- Output budget: keep `RF_RFGPT_MAX_OUTPUT_TOKENS=192` unless a live test proves the endpoint
+  can complete comfortably inside the request-timeout budget.
 
 Do not put the model directory or any model weights inside the repository.
 
@@ -36,6 +39,10 @@ export RF_RFGPT_ENDPOINT=http://127.0.0.1:8090/v1
 export RF_RFGPT_MODEL_NAME=rfgpt
 export RF_RFGPT_MODEL_VERSION=Qwen2.5-VL-7B-rfa-wtr-v2-joint
 export RF_RFGPT_REQUEST_TIMEOUT_SECONDS=300
+export RF_RFGPT_TEMPERATURE=0
+export RF_RFGPT_TOP_P=1
+export RF_RFGPT_REPETITION_PENALTY=1.05
+export RF_RFGPT_MAX_OUTPUT_TOKENS=192
 export RF_WORKER_CONCURRENCY=1
 ```
 
@@ -73,6 +80,8 @@ curl -fsS http://127.0.0.1:8090/v1/models
 ```
 
 The platform adapter checks both endpoints and verifies that `rfgpt` is present in `/v1/models`.
+It sends the RF spectrogram as a lossless PNG data URL before the text prompt and requests
+strict structured JSON through `response_format`.
 
 ## GPU and CPU offload behavior
 
@@ -81,6 +90,11 @@ The RTX 4090 Laptop GPU has limited VRAM for this model. The validated command u
 - `--gpu-memory-utilization 0.80` to leave headroom for the desktop and platform processes;
 - `--cpu-offload-gb 10` to keep the model usable on approximately 16 GiB VRAM;
 - `--max-num-seqs 1` plus platform `RF_WORKER_CONCURRENCY=1` for single-image inference.
+
+CPU offload makes the model fit, but live generation is slow. The observed generation rate is
+approximately 1 token/second, so the platform default output cap is 192 tokens under a 300-second
+request timeout. Do not raise the output cap near or above the timeout budget unless you also
+validate end-to-end latency under the same GPU/offload conditions.
 
 Monitor with:
 
@@ -106,8 +120,10 @@ nvidia-smi
 
 - OOM or CUDA allocation failure: confirm no other GPU process is using VRAM, keep
   `--max-num-seqs 1`, reduce `--gpu-memory-utilization`, or increase CPU offload.
-- Timeout: confirm the platform uses `RF_RFGPT_REQUEST_TIMEOUT_SECONDS=300`; first requests may be
-  slower after startup.
+- Timeout: confirm the platform uses `RF_RFGPT_REQUEST_TIMEOUT_SECONDS=300`,
+  `RF_RFGPT_MAX_OUTPUT_TOKENS=192`, and `RF_RFGPT_REPETITION_PENALTY=1.05`; first requests may be
+  slower after startup, and CPU-offloaded generation at roughly 1 token/second needs a conservative
+  output limit.
 - Unavailable endpoint: verify `/health`, `/v1/models`, host `127.0.0.1`, port `8090`, and that
   `RF_RFGPT_ENDPOINT` ends with `/v1`.
 - Invalid output: the adapter stores the raw response, marks `parser_valid=false`, creates no

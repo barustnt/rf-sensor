@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -16,7 +17,7 @@ from rf_platform.common.config import get_settings  # noqa: E402
 from rf_platform.common.time import utc_now  # noqa: E402
 from rf_platform.contracts.analysis import AnalysisRequest  # noqa: E402
 from rf_platform.preprocessing.atheer_hann import preprocess_iq  # noqa: E402
-from rf_platform.worker.rfgpt.local import LocalVLLMRFGPTAdapter  # noqa: E402
+from rf_platform.worker.rfgpt.local import LocalVLLMRFGPTAdapter, RFGPTAdapterError  # noqa: E402
 
 
 def deterministic_iq(sample_rate: int = 20_000_000) -> np.ndarray:
@@ -30,6 +31,7 @@ def deterministic_iq(sample_rate: int = 20_000_000) -> np.ndarray:
 
 
 async def main() -> int:
+    run_started = time.perf_counter()
     settings = get_settings()
     if settings.rfgpt_adapter != "vllm":
         print("Set RF_RFGPT_ADAPTER=vllm for the real-model smoke test.", file=sys.stderr)
@@ -37,6 +39,10 @@ async def main() -> int:
     output_dir = ROOT / ".data" / "m3-smoke"
     output_dir.mkdir(parents=True, exist_ok=True)
     image_path = output_dir / "atheer-hann-v1-canonical.png"
+    raw_response_path = output_dir / "raw_response.json"
+    analysis_result_path = output_dir / "analysis_result.json"
+
+    print("preprocessing_started", flush=True)
     result = preprocess_iq(
         deterministic_iq(),
         sample_rate=20_000_000,
@@ -45,39 +51,65 @@ async def main() -> int:
         band_prior="manual_smoke",
     )
     image_path.write_bytes(result.png_bytes)
+    print(f"preprocessing_completed image_path={image_path}", flush=True)
 
     adapter = LocalVLLMRFGPTAdapter(settings)
     health = await adapter.health()
     print(json.dumps({"health": health.model_dump(mode="json")}, indent=2), flush=True)
     if not health.ready:
+        print(f"elapsed_seconds={time.perf_counter() - run_started:.2f}", flush=True)
         return 3
 
     started = utc_now()
-    analysis = await adapter.analyze(
-        AnalysisRequest(
-            job_id="manual-real-model-smoke",
-            capture_id="manual-real-model-smoke",
-            artifact_keys=["m3-smoke/atheer-hann-v1-canonical.png"],
-            artifact_paths=[image_path],
-            sensor_id="manual-smoke-sensor",
-            capture_started_at_utc=started,
-            center_frequency_hz=2_440_000_000,
-            sample_rate_sps=20_000_000,
-            bandwidth_hz=20_000_000,
-            gain_db=30.0,
-            profile_id="manual_smoke",
-            preprocessing_version=result.pipeline_id,
-            prompt_version="technology-detection-v1",
+    request = AnalysisRequest(
+        job_id="manual-real-model-smoke",
+        capture_id="manual-real-model-smoke",
+        artifact_keys=["m3-smoke/atheer-hann-v1-canonical.png"],
+        artifact_paths=[image_path],
+        sensor_id="manual-smoke-sensor",
+        capture_started_at_utc=started,
+        center_frequency_hz=2_440_000_000,
+        sample_rate_sps=20_000_000,
+        bandwidth_hz=20_000_000,
+        gain_db=30.0,
+        profile_id="manual_smoke",
+        preprocessing_version=result.pipeline_id,
+        prompt_version="technology-detection-v1",
+    )
+    print(
+        "inference_started "
+        f"endpoint={adapter._redacted_endpoint()} "
+        f"model={settings.rfgpt_model_name} "
+        f"version={settings.rfgpt_model_version} "
+        f"timeout_seconds={settings.rfgpt_request_timeout_seconds} "
+        f"max_output_tokens={settings.rfgpt_max_output_tokens}",
+        flush=True,
+    )
+    try:
+        analysis = await adapter.analyze(request)
+    except RFGPTAdapterError as exc:
+        raw_response = getattr(exc, "raw_response", None)
+        if raw_response is not None:
+            raw_response_path.write_text(raw_response, encoding="utf-8")
+            print(f"raw_response_path={raw_response_path}", flush=True)
+        print(
+            "adapter_error "
+            f"category={exc.category} "
+            f"retryable={exc.retryable} "
+            f"elapsed_seconds={time.perf_counter() - run_started:.2f} "
+            f"message={exc}",
+            file=sys.stderr,
+            flush=True,
         )
-    )
-    (output_dir / "raw_response.json").write_text(analysis.raw_response, encoding="utf-8")
-    (output_dir / "analysis_result.json").write_text(
-        analysis.model_dump_json(indent=2), encoding="utf-8"
-    )
+        return 5
+
+    raw_response_path.write_text(analysis.raw_response, encoding="utf-8")
+    analysis_result_path.write_text(analysis.model_dump_json(indent=2), encoding="utf-8")
     print(analysis.model_dump_json(indent=2), flush=True)
     print(f"latency_ms={analysis.latency_ms}", flush=True)
-    print(f"raw_response_path={output_dir / 'raw_response.json'}", flush=True)
-    print(f"analysis_result_path={output_dir / 'analysis_result.json'}", flush=True)
+    print(f"elapsed_seconds={time.perf_counter() - run_started:.2f}", flush=True)
+    print(f"raw_response_path={raw_response_path}", flush=True)
+    print(f"analysis_result_path={analysis_result_path}", flush=True)
     if analysis.status != "succeeded" or not analysis.parser_valid:
         print(
             "RF-GPT response was transported but did not satisfy the JSON schema.", file=sys.stderr
