@@ -1,0 +1,13 @@
+schema_version: "1.0"
+sensors:
+  - sensor_id: laptop-b210-001
+    display_name: Laptop B210 Sensor
+    adapter: simulated
+    location:
+      site: campus
+      building: unknown
+      room: lab
+      coordinates: null
+    groups: [campus, 2g4-monitoring]
+    token_env: RF_SENSOR_TOKEN
+    desired_profile: campus_general

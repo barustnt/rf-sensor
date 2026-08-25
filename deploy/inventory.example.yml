@@ -1,0 +1,22 @@
+# Example inventory only. These lab IP values are mutable deployment data, not device identities.
+schema_version: "1.0"
+central_host:
+  stable_id: laptop-b210-001
+  role: initial all-in-one platform
+  api_url: http://10.10.178.156:8000
+  notes: Replace with rf-laptop.local or the current laptop LAN address in local deployment configuration.
+sensors:
+  - stable_id: pi-pluto-001
+    current_host: Raspberry Pi
+    current_ip: 10.10.187.222
+    adapter: pluto
+    role: future edge RF sensor
+  - stable_id: laptop-b210-001
+    current_host: Laptop
+    current_ip: 10.10.178.156
+    adapter: simulated
+    role: Milestone 1 simulated sensor; future B210 edge sensor
+future_hosts:
+  - stable_id: rf-workstation-001
+    current_ip: 10.10.180.45
+    role: future central host after connectivity is available

@@ -1,0 +1,30 @@
+schema_version: "1.0"
+profile_id: device_experiment
+description: Labeled start/stop experiment for a purchased BLE test device
+enabled: true
+schedule:
+  mode: continuous
+radio:
+  center_frequency_hz: 2426000000
+  sample_rate_sps: 20000000
+  bandwidth_hz: 20000000
+  gain_mode: manual
+  gain_db: 30
+capture:
+  duration_ms: 750
+  interval_ms: 500
+preprocessing:
+  pipeline_version: rfgpt-compatible-v1
+  fft_size: 512
+  hop_size: 512
+  window: blackman
+  output_width_px: 512
+  output_height_px: 512
+  color_map: viridis
+  include_axes: false
+  db_min: null
+  db_max: null
+retention:
+  upload_spectrogram: true
+  upload_iq: triggered
+  local_iq_ring_seconds: 60

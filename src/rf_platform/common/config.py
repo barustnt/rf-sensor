@@ -1,0 +1,112 @@
+from __future__ import annotations
+
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from pydantic import Field, SecretStr, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _split_csv(value: str | list[str]) -> list[str]:
+    if isinstance(value, list):
+        return value
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="RF_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    env: str = "development"
+    timezone: str = "Asia/Dubai"
+
+    platform_url: str = Field(default="http://localhost:8000")
+    api_host: str = "localhost"
+    api_port: int = 8000
+    dashboard_host: str = "localhost"
+    dashboard_port: int = 7860
+    gradio_share: bool = False
+    cors_origins: str = ""
+
+    database_url: str = "postgresql+asyncpg://rf_platform@localhost:5432/rf_platform"
+    nats_url: str = "nats://localhost:4222"
+    artifact_backend: str = "filesystem"
+    artifact_root: Path = Path(".data/artifacts")
+    max_upload_bytes: int = 10 * 1024 * 1024
+
+    sensor_id: str = ""
+    sensor_token: SecretStr | None = None
+    sensor_display_name: str = "RF Sensor"
+    sensor_location: str = "unknown"
+    sensor_adapter: str = "simulated"
+    sensor_profile: str = "campus_general"
+    heartbeat_interval_seconds: int = 10
+    offline_after_seconds: int = 30
+    spool_root: Path = Path(".data/spool")
+    spool_max_bytes: int = 10_737_418_240
+    simulated_fixture_path: Path | None = None
+
+    rfgpt_adapter: str = "mock"
+    rfgpt_model_name: str = "rfgpt"
+    rfgpt_model_version: str = "unknown"
+    rfgpt_endpoint: str = Field(default="http://localhost:8090")
+    rfgpt_conda_env: str = ""
+    rfgpt_request_timeout_seconds: int = 120
+    worker_max_attempts: int = 5
+    worker_concurrency: int = 1
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"unknown timezone: {value}") from exc
+        return value
+
+    @field_validator("artifact_backend")
+    @classmethod
+    def validate_artifact_backend(cls, value: str) -> str:
+        if value != "filesystem":
+            raise ValueError("Milestone 1 supports only filesystem artifact storage")
+        return value
+
+    @field_validator("worker_concurrency")
+    @classmethod
+    def validate_worker_concurrency(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("worker concurrency must be at least 1")
+        if value != 1:
+            raise ValueError("Milestone 1 worker concurrency is limited to 1")
+        return value
+
+    def require_sensor_token(self) -> SecretStr:
+        if self.sensor_token is None or not self.sensor_token.get_secret_value():
+            raise RuntimeError("RF_SENSOR_TOKEN must be set for sensor-authenticated operations")
+        return self.sensor_token
+
+    def redacted(self) -> dict[str, Any]:
+        data = self.model_dump(mode="json")
+        for key in list(data):
+            lowered = key.lower()
+            if "token" in lowered or "password" in lowered or lowered == "database_url":
+                data[key] = "***redacted***"
+        return data
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()
+
+
+def reset_settings_cache() -> None:
+    get_settings.cache_clear()
