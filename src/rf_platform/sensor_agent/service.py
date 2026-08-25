@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import socket
 from contextlib import suppress
 from datetime import datetime
@@ -31,8 +32,23 @@ class SensorService:
         self.settings = settings
         self.spool = DurableSpool(settings.spool_root, settings.spool_max_bytes)
         self.adapter = adapter or SimulatedSensorAdapter(settings)
-        self.sequence = 0
+        self.state_path = settings.spool_root / "sensor-state.json"
+        self.sequence = self._load_sequence()
         self.last_capture_utc: datetime | None = None
+
+    def _load_sequence(self) -> int:
+        try:
+            payload = json.loads(self.state_path.read_text(encoding="utf-8"))
+            return int(payload.get("last_heartbeat_sequence", 0))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return 0
+
+    def _save_sequence(self) -> None:
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        self.state_path.write_text(
+            json.dumps({"last_heartbeat_sequence": self.sequence}, sort_keys=True),
+            encoding="utf-8",
+        )
 
     async def register(self) -> dict[str, object]:
         token = self.settings.require_sensor_token().get_secret_value()
@@ -83,6 +99,7 @@ class SensorService:
                 headers={"X-Sensor-Token": token},
             )
         response.raise_for_status()
+        self._save_sequence()
         return response.json()
 
     async def poll_desired_state(self) -> str:

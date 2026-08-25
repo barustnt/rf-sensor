@@ -5,14 +5,26 @@ from rf_platform.dashboard.api_client import DashboardApiClient
 
 def render_overview(client: DashboardApiClient) -> str:
     data = client.overview()
-    sensors = data["sensors"].get("items", [])
-    online = sum(1 for item in sensors if item.get("operational_status") == "online")
-    offline = sum(1 for item in sensors if item.get("operational_status") == "offline")
+    metrics = data.get("metrics", {})
+    sensors_metric = metrics.get("sensors", {})
     jobs = data["jobs"]
+    storage = data["storage"]
+    warnings = storage.get("warnings", [])
+    warning_text = (
+        "\n".join(f"- {w.get('severity')}: {w.get('message')}" for w in warnings) or "None"
+    )
+    model = metrics.get("model", {})
     return (
-        f"Sensors: total={len(sensors)} online={online} offline={offline}\n"
+        f"Sensors: total={sensors_metric.get('total', 0)} "
+        f"online={sensors_metric.get('online', 0)} degraded={sensors_metric.get('degraded', 0)} "
+        f"offline={sensors_metric.get('offline', 0)} stale={sensors_metric.get('stale', 0)}\n"
         f"Jobs: pending={jobs.get('pending', 0)} running={jobs.get('running', 0)} "
-        f"failed={jobs.get('failed', 0)} deadletter={jobs.get('deadletter', 0)}\n"
-        f"Recent events={data['events'].get('count', 0)} alerts={data['alerts'].get('count', 0)}\n"
-        f"Health={data['health'].get('status')}"
+        f"failed={jobs.get('failed', 0)} deadletter={jobs.get('deadletter', 0)} "
+        f"p50={jobs.get('latency_ms_p50')}ms p95={jobs.get('latency_ms_p95')}ms\n"
+        f"RF-GPT mock: {model.get('model_name')} version={model.get('model_version')} "
+        f"adapter={model.get('adapter')} latency_p95={model.get('latency_ms_p95')}ms\n"
+        f"Health={data['health'].get('status')}\n"
+        f"Storage trend={storage.get('central_trend', {}).get('status')} "
+        f"time_to_full={storage.get('central_trend', {}).get('time_to_full_seconds')}\n"
+        f"Warnings:\n{warning_text}"
     )

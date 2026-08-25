@@ -29,3 +29,9 @@ logs/
 .DS_Store
 .idea/
 .vscode/
+# Local model directories / weights are never committed.
+Qwen*/
+models/
+model_weights/
+*.safetensors
+*.bin

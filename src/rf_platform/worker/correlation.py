@@ -22,6 +22,7 @@ async def correlate_result(
         return existing
     now = utc_now()
     evidence = [
+        {"target_type": "sensor", "target_id": capture.sensor_id},
         {"target_type": "capture", "target_id": capture.capture_id},
         {"target_type": "analysis", "target_id": result.analysis_id},
     ]

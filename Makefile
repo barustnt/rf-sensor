@@ -8,7 +8,7 @@ endif
 CONDA_ENV ?= rf-intel
 COMPOSE ?= docker compose -f deploy/docker-compose.infra.yml --project-name rf-sensor
 
-.PHONY: help install infra-up infra-down migrate seed api worker sensor-sim dashboard demo format lint typecheck test check
+.PHONY: help install infra-up infra-down migrate seed api worker sensor-sim dashboard demo m2-acceptance backup-restore-check format lint typecheck test check
 
 help: ## Show commands
 	@awk 'BEGIN {FS = ":.*##"; printf "Available targets:\n"} /^[a-zA-Z_-]+:.*##/ {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -42,6 +42,12 @@ dashboard: ## Run Gradio dashboard
 
 demo: ## Run simulated end-to-end acceptance demo
 	$(PYTHON) scripts/run_demo.py
+
+m2-acceptance: ## Run Milestone 2 operational acceptance flow
+	$(PYTHON) scripts/run_milestone2_acceptance.py
+
+backup-restore-check: ## Verify PostgreSQL and artifact backup/restore
+	$(PYTHON) scripts/verify_backup_restore.py
 
 format: ## Format code
 	$(PYTHON) -m ruff format src tests scripts

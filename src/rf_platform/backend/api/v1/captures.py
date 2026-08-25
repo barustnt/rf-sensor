@@ -5,9 +5,14 @@ import json
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from pydantic import ValidationError
-from sqlalchemy import desc, select
+from sqlalchemy import String, cast, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from rf_platform.backend.api.v1.pagination import (
+    clamp_limit_offset,
+    paged_response,
+    parse_optional_utc,
+)
 from rf_platform.backend.db import models
 from rf_platform.backend.dependencies import (
     artifact_store_dependency,
@@ -97,16 +102,40 @@ async def create_capture(
 @router.get("/captures")
 async def list_captures(
     limit: int = 50,
+    offset: int = 0,
     sensor_id: str | None = None,
+    location: str | None = None,
+    profile_id: str | None = None,
+    session_id: str | None = None,
+    state: str | None = None,
+    start_utc: str | None = None,
+    end_utc: str | None = None,
     session: AsyncSession = Depends(db_session),
 ) -> dict[str, object]:
-    limit = min(max(limit, 1), 500)
-    stmt = select(models.Capture).order_by(desc(models.Capture.started_at_utc)).limit(limit)
+    limit, offset = clamp_limit_offset(limit, offset)
+    stmt = select(models.Capture)
+    if location:
+        stmt = stmt.join(models.Sensor, models.Sensor.sensor_id == models.Capture.sensor_id)
     if sensor_id:
         stmt = stmt.where(models.Capture.sensor_id == sensor_id)
-    result = await session.execute(stmt)
+    if location:
+        stmt = stmt.where(cast(models.Sensor.location, String).ilike(f"%{location}%"))
+    if profile_id:
+        stmt = stmt.where(models.Capture.profile_id == profile_id)
+    if session_id:
+        stmt = stmt.where(models.Capture.session_id == session_id)
+    if state:
+        stmt = stmt.where(models.Capture.state == state)
+    if start := parse_optional_utc(start_utc):
+        stmt = stmt.where(models.Capture.started_at_utc >= start)
+    if end := parse_optional_utc(end_utc):
+        stmt = stmt.where(models.Capture.started_at_utc < end)
+    total = (await session.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+    result = await session.execute(
+        stmt.order_by(desc(models.Capture.started_at_utc)).limit(limit).offset(offset)
+    )
     items = [_capture_to_dict(capture) for capture in result.scalars()]
-    return {"items": items, "count": len(items)}
+    return paged_response(items, int(total), limit, offset)
 
 
 @router.get("/captures/{capture_id}")

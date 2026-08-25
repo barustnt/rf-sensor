@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from rf_platform.backend.db import models
+from rf_platform.backend.services.storage_history import snapshot_from_heartbeat
 from rf_platform.common.time import utc_now
 from rf_platform.contracts.sensor import DesiredState, SensorHeartbeat, SensorRegistration
 
@@ -85,22 +86,22 @@ async def record_heartbeat(session: AsyncSession, heartbeat: SensorHeartbeat) ->
         )
     )
     if existing.scalar_one_or_none() is None:
-        session.add(
-            models.SensorHeartbeatRow(
-                sensor_id=heartbeat.sensor_id,
-                sequence=heartbeat.sequence,
-                timestamp_utc=heartbeat.timestamp_utc,
-                status=heartbeat.status,
-                active_profile=heartbeat.active_profile,
-                disk=heartbeat.disk.model_dump(mode="json"),
-                spool=heartbeat.spool.model_dump(mode="json"),
-                system=heartbeat.system.model_dump(mode="json"),
-                radio=heartbeat.radio.model_dump(mode="json"),
-                last_capture_utc=heartbeat.last_capture_utc,
-                clock_offset_ms=heartbeat.clock_offset_ms,
-                received_at_utc=now,
-            )
+        heartbeat_row = models.SensorHeartbeatRow(
+            sensor_id=heartbeat.sensor_id,
+            sequence=heartbeat.sequence,
+            timestamp_utc=heartbeat.timestamp_utc,
+            status=heartbeat.status,
+            active_profile=heartbeat.active_profile,
+            disk=heartbeat.disk.model_dump(mode="json"),
+            spool=heartbeat.spool.model_dump(mode="json"),
+            system=heartbeat.system.model_dump(mode="json"),
+            radio=heartbeat.radio.model_dump(mode="json"),
+            last_capture_utc=heartbeat.last_capture_utc,
+            clock_offset_ms=heartbeat.clock_offset_ms,
+            received_at_utc=now,
         )
+        session.add(heartbeat_row)
+        session.add(snapshot_from_heartbeat(heartbeat_row))
     sensor.last_seen_at_utc = heartbeat.timestamp_utc
     sensor.active_profile = heartbeat.active_profile
     sensor.operational_status = heartbeat.status

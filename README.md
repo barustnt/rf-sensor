@@ -1,9 +1,11 @@
 # RF Intelligence Platform
 
-Milestones 0-1 implement a simulated end-to-end RF intelligence slice: simulated sensor,
-FastAPI backend, PostgreSQL, NATS JetStream, filesystem artifacts, a mock RF-GPT worker,
-Gradio dashboard, and historical query API. Real Pluto+, USRP B210, and real RF-GPT
-integration are intentionally out of scope until later milestones.
+Milestones 0-2 implement a simulated end-to-end RF intelligence slice plus operational
+dashboard hardening: simulated sensor, FastAPI backend, PostgreSQL, NATS JetStream,
+filesystem artifacts, a mock RF-GPT worker, Gradio dashboard, historical query API,
+filtering/pagination, audited operator actions, retry controls, storage trends, metrics,
+report-only retention, and backup/restore procedures. Real Pluto+, USRP B210, and real RF-GPT
+integration remain out of scope.
 
 ## Environment
 
@@ -31,18 +33,26 @@ make worker
 make sensor-sim
 make dashboard
 make demo
+conda run -n rf-intel python scripts/run_milestone2_acceptance.py
 make check
 make infra-down
 ```
 
 `make demo` runs the Milestone 1 simulated acceptance flow and stops before real hardware or
-real RF-GPT work.
+real RF-GPT work. `scripts/run_milestone2_acceptance.py` exercises the Milestone 2 operational
+dashboard and reliability acceptance flow, including disposable backup/restore verification.
 
 ## Runtime boundaries
 
 Sensors talk only to the API. The dashboard talks only to the API. The worker consumes durable
 JetStream jobs and writes validated model observations to PostgreSQL. RF-GPT is hidden behind an
-adapter boundary; Milestone 1 uses only the deterministic mock adapter.
+adapter boundary; the current milestones use only the deterministic mock adapter with version
+`mock-v1`.
+
+## Operations
+
+Retention is report-only in Milestone 2 and does not delete data. PostgreSQL and artifact
+backup/restore steps are documented in `docs/backup-restore.md`.
 
 ## Safety notes
 

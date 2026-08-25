@@ -8,4 +8,25 @@
 6. Run API, worker, simulated sensor, and dashboard with their Make targets, or run the full
    simulated flow with `make demo`.
 
-Backups and workstation migration are deferred until Milestone 2+.
+## Milestone 2 operator actions
+
+- Dashboard list views are bounded by filters plus `limit`/`offset`; avoid unbounded time ranges
+  for high-volume tables.
+- RF-GPT output details show structured findings, raw response, model/prompt versions, linked
+  evidence, annotations, and a limitation notice. Treat model output as an observation, not
+  verified ground truth.
+- Alert acknowledgment, dismissal, confirmation, annotations, retry requests, and retention
+  reports are written to `system_events` for audit review.
+- Failed and dead-letter analysis jobs may be retried from the dashboard/API only when marked
+  retry-eligible. The retry creates a fresh durable analysis request.
+- Retention runs in report-only mode for Milestone 2. Reports identify eligible records and files
+  but never delete them automatically.
+
+## Backup and restore
+
+Use `docs/backup-restore.md` for PostgreSQL and artifact backup/restore procedures. The disposable
+verification command is:
+
+```bash
+conda run -n rf-intel python scripts/verify_backup_restore.py
+```

@@ -55,9 +55,17 @@ class Settings(BaseSettings):
     spool_max_bytes: int = 10_737_418_240
     simulated_fixture_path: Path | None = None
 
+    retention_report_only: bool = True
+    retention_heartbeat_days: int = 30
+    retention_capture_days: int = 180
+    retention_artifact_days: int = 30
+    retention_log_days: int = 14
+    storage_warning_used_percent: float = 85.0
+    storage_critical_used_percent: float = 95.0
+
     rfgpt_adapter: str = "mock"
     rfgpt_model_name: str = "rfgpt"
-    rfgpt_model_version: str = "unknown"
+    rfgpt_model_version: str = "mock-v1"
     rfgpt_endpoint: str = Field(default="http://localhost:8090")
     rfgpt_conda_env: str = ""
     rfgpt_request_timeout_seconds: int = 120

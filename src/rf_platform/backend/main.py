@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -15,6 +16,7 @@ from rf_platform.backend.api.v1 import (
     events,
     health,
     logs,
+    operational,
     query,
     sensors,
     storage,
@@ -67,6 +69,28 @@ def create_app() -> FastAPI:
             allow_methods=["GET", "POST", "PUT", "PATCH"],
             allow_headers=["Authorization", "Content-Type", "X-Sensor-Token"],
         )
+
+    app.state.request_metrics = {
+        "count": 0,
+        "total_latency_ms": 0.0,
+        "avg_latency_ms": None,
+        "by_status": {},
+    }
+
+    @app.middleware("http")
+    async def metrics_middleware(request, call_next):  # type: ignore[no-untyped-def]
+        start = time.perf_counter()
+        response = await call_next(request)
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        metrics = request.app.state.request_metrics
+        metrics["count"] += 1
+        metrics["total_latency_ms"] += elapsed_ms
+        metrics["avg_latency_ms"] = round(metrics["total_latency_ms"] / metrics["count"], 3)
+        status_key = str(response.status_code)
+        by_status = metrics.setdefault("by_status", {})
+        by_status[status_key] = by_status.get(status_key, 0) + 1
+        return response
+
     for router in [
         health.router,
         sensors.router,
@@ -76,6 +100,7 @@ def create_app() -> FastAPI:
         alerts.router,
         logs.router,
         storage.router,
+        operational.router,
         query.router,
     ]:
         app.include_router(router)

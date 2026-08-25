@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     DateTime,
     Float,
@@ -315,3 +316,36 @@ class OutboxEvent(Base):
     published_at_utc: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class StorageSnapshot(Base):
+    __tablename__ = "storage_snapshots"
+    __table_args__ = (
+        Index("ix_storage_snapshots_target_time", "target_type", "target_id", "timestamp_utc"),
+    )
+
+    snapshot_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    target_type: Mapped[str] = mapped_column(String(32))
+    target_id: Mapped[str] = mapped_column(String(128))
+    label: Mapped[str] = mapped_column(String(255))
+    total_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    free_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    used_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    artifact_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    spool_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    pending_items: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source: Mapped[str] = mapped_column(String(64))
+    context: Mapped[dict[str, Any]] = mapped_column(JSON, default=_json_default)
+    timestamp_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class RetentionReport(Base):
+    __tablename__ = "retention_reports"
+
+    report_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    report_only: Mapped[bool] = mapped_column(Boolean, default=True)
+    policy: Mapped[dict[str, Any]] = mapped_column(JSON)
+    summary: Mapped[dict[str, Any]] = mapped_column(JSON)
+    items: Mapped[list[Any]] = mapped_column(JSON)
+    created_by: Mapped[str] = mapped_column(String(128), default="operator")
+    created_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
