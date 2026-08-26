@@ -66,7 +66,7 @@ async def test_local_vllm_adapter_against_mocked_openai_http_endpoint(tmp_path: 
             gain_db=30,
             profile_id="integration",
             preprocessing_version="atheer-hann-v1",
-            prompt_version="technology-detection-primary-v3",
+            prompt_version="technology-detection-primary-v4",
         )
     )
 

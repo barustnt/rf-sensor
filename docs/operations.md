@@ -41,6 +41,9 @@ conda run -n rf-intel python scripts/verify_backup_restore.py
   password must not be printed in logs or documentation.
 - The worker validates PostgreSQL readiness with `SELECT 1` before it connects to NATS or consumes
   analysis jobs. Authentication or connectivity failures stop startup before subscription.
+- Internally inconsistent RF-GPT output is preserved raw, marked `semantic_inconsistency`, excluded
+  from trusted findings, and does not create an event or alert. RF-GPT findings that are accepted
+  remain unverified model observations.
 - Keep model paths and weights outside Git and supply `RF_RFGPT_MODEL_PATH` only through an
   untracked local environment file.
 - The worker still runs with `RF_WORKER_CONCURRENCY=1`.

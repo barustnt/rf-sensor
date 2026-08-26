@@ -74,7 +74,7 @@ async def main() -> int:
         gain_db=30.0,
         profile_id="manual_smoke",
         preprocessing_version=result.pipeline_id,
-        prompt_version="technology-detection-primary-v3",
+        prompt_version="technology-detection-primary-v4",
     )
     print(
         "inference_started "

@@ -346,19 +346,22 @@ class B210SensorAdapter:
 
     async def capabilities(self) -> SensorCapabilities:
         rx_channels = self._uhd.rx_channel_count() if self.opened else 1
+        profiles = [
+            self.settings.sensor_profile,
+            "b210_2g4_demo",
+            "campus_general",
+            "campus_2g4_coexistence",
+            "exam_ble",
+            "calibration",
+            "device_experiment",
+        ]
+        supported_profiles = list(dict.fromkeys(profiles))
         return SensorCapabilities(
             frequency_min_hz=None,
             frequency_max_hz=None,
             maximum_sample_rate_sps=None,
             rx_channels=rx_channels,
-            supported_profiles=[
-                "campus_general",
-                "campus_2g4_coexistence",
-                "exam_ble",
-                "calibration",
-                "device_experiment",
-                "b210_2g4_demo",
-            ],
+            supported_profiles=supported_profiles,
         )
 
     async def apply_profile(self, profile: CaptureProfile) -> None:

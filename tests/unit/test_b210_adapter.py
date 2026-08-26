@@ -205,6 +205,7 @@ async def test_configuration_mapping_exact_sample_collection_and_metadata(tmp_pa
     assert fake.recv_calls > 1
     assert fake.stream_args == ("fc32", "sc16", 0)
 
+    assert bundle.envelope.profile_id == "b210_2g4_demo"
     metadata = bundle.envelope.radio.hardware
     assert metadata["adapter_type"] == "b210"
     assert metadata["manufacturer"] == "Ettus Research"
@@ -223,6 +224,20 @@ async def test_configuration_mapping_exact_sample_collection_and_metadata(tmp_pa
     assert bundle.envelope.preprocessing.window == "hann"
     assert bundle.envelope.preprocessing.metadata["pipeline_id"] == "atheer-hann-v1"
     Image.open(bundle.artifact_path).verify()
+
+
+@pytest.mark.asyncio
+async def test_b210_capabilities_prefer_configured_profile_for_desired_state(
+    tmp_path: Path,
+) -> None:
+    adapter = B210SensorAdapter(
+        _settings(tmp_path, sensor_profile="b210_2g4_demo"),
+        uhd_device=FakeB210Device(_samples(1024)),
+    )
+
+    capabilities = await adapter.capabilities()
+
+    assert capabilities.supported_profiles[0] == "b210_2g4_demo"
 
 
 @pytest.mark.asyncio
@@ -336,6 +351,7 @@ async def test_spool_upload_and_restart_recovery_use_b210_capture(tmp_path: Path
     service = SensorService(settings, adapter=B210SensorAdapter(settings, uhd_device=fake))
 
     item = await service.capture_to_spool("b210_2g4_demo")
+    assert item.envelope.profile_id == "b210_2g4_demo"
     recovered = DurableSpool(settings.spool_root, settings.spool_max_bytes).pending_items()
     assert [pending.envelope.capture_id for pending in recovered] == [item.envelope.capture_id]
 

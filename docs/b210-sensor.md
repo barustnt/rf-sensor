@@ -54,7 +54,9 @@ export RF_B210_PERSIST_RAW_IQ=false
 ```
 
 Keep machine addresses configurable. The demo values belong in local environment files or profiles,
-not Python code.
+not Python code. When `RF_SENSOR_PROFILE=b210_2g4_demo`, the selected profile name, capture logs,
+and stored `Capture.profile_id` should all remain `b210_2g4_demo`; `campus_general` must not be
+used as the selected B210 profile ID.
 
 ## Local receive-only hardware/preprocessing acceptance
 
@@ -140,6 +142,7 @@ persistence, schema validity, provenance, and dashboard visibility.
 Terminal 1:
 
 ```bash
+export RF_SENSOR_TOKEN="${RF_SENSOR_TOKEN:?set an untracked shared sensor token}"
 export RF_DATABASE_URL="postgresql+asyncpg://rf_platform:${RF_POSTGRES_PASSWORD}@127.0.0.1:5432/rf_platform"
 export RF_RFGPT_ADAPTER=vllm
 export RF_RFGPT_ENDPOINT=http://127.0.0.1:8090/v1
@@ -156,8 +159,9 @@ make PYTHON='conda run -n rf-intel python' api
 ```
 
 Set `RF_POSTGRES_PASSWORD` locally before constructing `RF_DATABASE_URL`; do not paste or log the
-password. The API and worker must use the same `RF_RFGPT_ADAPTER`, model name/version,
-prompt/schema code revision, and `RF_DATABASE_URL` so jobs are targeted at the worker's model.
+password. Set `RF_SENSOR_TOKEN` from an untracked local secret and reuse the same value for the
+sensor command. The API and worker must use the same `RF_RFGPT_ADAPTER`, model name/version,
+v4 prompt/schema code revision, and `RF_DATABASE_URL` so jobs are targeted at the worker's model.
 
 Terminal 2, with the local vLLM server already running per `docs/rfgpt-runtime.md`:
 
@@ -177,6 +181,7 @@ make PYTHON='conda run -n rf-intel python' worker
 Terminal 3:
 
 ```bash
+RF_SENSOR_TOKEN="${RF_SENSOR_TOKEN:?set the same token used by the API}" \
 RF_SENSOR_ADAPTER=b210 \
 RF_SENSOR_ID=laptop-b210-001 \
 RF_SENSOR_PROFILE=b210_2g4_demo \
@@ -198,3 +203,5 @@ make PYTHON='conda run -n rf-intel python' dashboard
 Verify that the B210 sensor is visible by stable ID, the capture and `atheer-hann-v1`
 spectrogram are persisted, the analysis job completes or records a parser/model failure safely,
 and the dashboard displays provenance. Any RF-GPT label is an unverified model observation.
+Internally inconsistent model output is preserved as raw response, rejected from trusted findings,
+and must not produce an event or alert.

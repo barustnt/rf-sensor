@@ -24,8 +24,8 @@ from rf_platform.contracts.analysis import (
     TechnologyFinding,
 )
 
-PROMPT_VERSION = "technology-detection-primary-v3"
-RESPONSE_SCHEMA_NAME = "rfgpt_analysis_primary_v3"
+PROMPT_VERSION = "technology-detection-primary-v4"
+RESPONSE_SCHEMA_NAME = "rfgpt_analysis_primary_v4"
 RF_QUALITY_FLAGS = (
     "no_signal",
     "low_snr",
@@ -35,6 +35,8 @@ RF_QUALITY_FLAGS = (
     "limited_bandwidth",
 )
 NON_RF_FLAGS_REMOVED = "non_rf_flags_removed"
+SEMANTIC_INCONSISTENCY = "semantic_inconsistency"
+PARSER_FAILED = "parser_failed"
 MAX_TECHNOLOGIES = 1
 MAX_SIGNALS = 1
 MAX_EVIDENCE_ITEMS = 2
@@ -93,7 +95,11 @@ Rules: use at most one item in technologies and at most one item in signals; no 
 observations must be concise; quality_flags may contain only these RF-only values:
 no_signal, low_snr, uncertain, interference, clipping_suspected, limited_bandwidth. Use null for
 model_score unless calibrated; do not invent confidence scores, payload contents, or non-RF
-attribution, identity, ownership, or behavioral conclusions."""
+attribution, identity, ownership, or behavioral conclusions. If technologies or signals contains
+any finding, overall_assessment and quality_flags must not claim no signal. If no signal is
+observable, technologies and signals must both be empty and quality_flags should contain no_signal.
+overall_assessment should be a concise natural-language RF assessment, not a bare quality-flag
+token. Do not create contradictory findings merely to fill the schema."""
 
 RF_GPT_ANALYSIS_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -261,6 +267,10 @@ class PermanentInputError(RFGPTAdapterError):
     retryable = False
 
 
+class SemanticInconsistencyError(ValueError):
+    """Structured model payload is internally inconsistent."""
+
+
 class LocalVLLMRFGPTAdapter:
     """Real local RF-GPT adapter using vLLM's OpenAI-compatible HTTP API."""
 
@@ -365,7 +375,7 @@ class LocalVLLMRFGPTAdapter:
                 started_at_utc=started,
                 completed_at_utc=completed,
                 latency_ms=latency_ms,
-                quality_flags=["parser_failed", "truncated_output"],
+                quality_flags=[PARSER_FAILED, "truncated_output"],
                 overall_assessment=(
                     "Model output reached the completion-token limit; raw response retained and "
                     "no trusted findings generated."
@@ -428,6 +438,7 @@ class LocalVLLMRFGPTAdapter:
             quality_flags = _trusted_quality_flags(payload["quality_flags"])
             if _contains_prohibited_claim(payload):
                 raise ValueError("model output contained prohibited non-RF assertion")
+            _validate_semantic_consistency(technologies, signals, overall, quality_flags)
             return AnalysisResult(
                 analysis_id=new_id(),
                 capture_id=request.capture_id,
@@ -458,16 +469,24 @@ class LocalVLLMRFGPTAdapter:
                 error=exc.__class__.__name__,
                 message=str(exc),
             )
+            quality_flags = [PARSER_FAILED, exc.__class__.__name__]
+            overall_assessment = (
+                "Parser failed; raw model response retained and no trusted findings generated."
+            )
+            if isinstance(exc, SemanticInconsistencyError):
+                quality_flags = [PARSER_FAILED, SEMANTIC_INCONSISTENCY]
+                overall_assessment = (
+                    "Semantic inconsistency: no-signal marker conflicts with non-empty findings; "
+                    "raw model response retained and no trusted findings generated."
+                )
             return self._parser_failed_result(
                 request=request,
                 raw_response=raw_response,
                 started_at_utc=started_at_utc,
                 completed_at_utc=completed_at_utc,
                 latency_ms=latency_ms,
-                quality_flags=["parser_failed", exc.__class__.__name__],
-                overall_assessment=(
-                    "Parser failed; raw model response retained and no trusted findings generated."
-                ),
+                quality_flags=quality_flags,
+                overall_assessment=overall_assessment,
             )
 
     def _parser_failed_result(
@@ -838,6 +857,48 @@ def _trusted_quality_flags(raw_flags: list[Any]) -> list[str]:
     if removed and len(trusted) < MAX_QUALITY_FLAGS:
         trusted.append(NON_RF_FLAGS_REMOVED)
     return trusted[:MAX_QUALITY_FLAGS]
+
+
+def has_no_signal_marker(overall_assessment: str | None, quality_flags: list[str]) -> bool:
+    if _is_no_signal_marker(overall_assessment or ""):
+        return True
+    return any(_is_no_signal_marker(flag) for flag in quality_flags)
+
+
+def result_has_no_signal_marker(result: AnalysisResult) -> bool:
+    return has_no_signal_marker(result.overall_assessment, result.quality_flags)
+
+
+def result_is_semantically_inconsistent(result: AnalysisResult) -> bool:
+    return SEMANTIC_INCONSISTENCY in result.quality_flags or (
+        bool(result.technologies or result.signals) and result_has_no_signal_marker(result)
+    )
+
+
+def _validate_semantic_consistency(
+    technologies: list[TechnologyFinding],
+    signals: list[SignalFinding],
+    overall_assessment: str,
+    quality_flags: list[str],
+) -> None:
+    if (technologies or signals) and has_no_signal_marker(overall_assessment, quality_flags):
+        raise SemanticInconsistencyError(
+            "no-signal marker conflicts with non-empty technology or signal findings"
+        )
+
+
+def _is_no_signal_marker(value: str) -> bool:
+    normalized = _normalize_marker(value)
+    return normalized in {
+        "no signal",
+        "no signals",
+        "no signal present",
+        "no signals present",
+    }
+
+
+def _normalize_marker(value: str) -> str:
+    return " ".join(value.lower().replace("_", " ").replace("-", " ").split())
 
 
 def _semantic_assertion_text(payload: dict[str, Any]) -> list[str]:

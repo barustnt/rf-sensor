@@ -29,7 +29,7 @@ def test_dashboard_api_client_sends_filters_and_pagination() -> None:
         location="lab",
         technology="bluetooth-like",
         model_version="mock-v1",
-        prompt_version="technology-detection-primary-v3",
+        prompt_version="technology-detection-primary-v4",
         status="succeeded",
         start_utc="2026-08-25T00:00:00Z",
         end_utc="2026-08-26T00:00:00Z",
@@ -43,7 +43,7 @@ def test_dashboard_api_client_sends_filters_and_pagination() -> None:
     assert params["location"] == "lab"
     assert params["technology"] == "bluetooth-like"
     assert params["model_version"] == "mock-v1"
-    assert params["prompt_version"] == "technology-detection-primary-v3"
+    assert params["prompt_version"] == "technology-detection-primary-v4"
     assert params["status"] == "succeeded"
     assert params["start_utc"] == "2026-08-25T00:00:00Z"
     assert params["end_utc"] == "2026-08-26T00:00:00Z"
@@ -88,7 +88,7 @@ def test_render_output_detail_is_readable_and_includes_limitations() -> None:
                     "name": "rfgpt",
                     "version": "mock-v1",
                     "adapter": "mock",
-                    "prompt_version": "technology-detection-primary-v3",
+                    "prompt_version": "technology-detection-primary-v4",
                 },
                 "latency_ms": 10,
                 "parser_valid": True,

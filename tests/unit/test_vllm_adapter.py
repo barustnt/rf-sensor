@@ -15,6 +15,7 @@ from rf_platform.contracts.analysis import AnalysisRequest
 from rf_platform.worker.rfgpt.local import (
     NON_RF_FLAGS_REMOVED,
     RF_QUALITY_FLAGS,
+    SEMANTIC_INCONSISTENCY,
     LocalVLLMRFGPTAdapter,
     PermanentInputError,
     VLLMConnectionError,
@@ -59,7 +60,7 @@ def _request(path: Path) -> AnalysisRequest:
         gain_db=30.0,
         profile_id="campus_general",
         preprocessing_version="atheer-hann-v1",
-        prompt_version="technology-detection-primary-v3",
+        prompt_version="technology-detection-primary-v4",
     )
 
 
@@ -164,14 +165,14 @@ async def test_successful_vllm_response_records_prompt_and_preprocessing(tmp_pat
     assert result.status == "succeeded"
     assert result.parser_valid is True
     assert result.model.version == "Qwen2.5-VL-7B-rfa-wtr-v2-joint"
-    assert result.model.prompt_version == "technology-detection-primary-v3"
+    assert result.model.prompt_version == "technology-detection-primary-v4"
     assert result.preprocessing_version == "atheer-hann-v1"
     assert result.inference_parameters["temperature"] == 0.0
     assert result.inference_parameters["top_p"] == 1.0
     assert result.inference_parameters["repetition_penalty"] == 1.05
     assert result.inference_parameters["max_output_tokens"] == 224
-    assert result.inference_parameters["prompt_version"] == "technology-detection-primary-v3"
-    assert result.inference_parameters["response_schema"] == "rfgpt_analysis_primary_v3"
+    assert result.inference_parameters["prompt_version"] == "technology-detection-primary-v4"
+    assert result.inference_parameters["response_schema"] == "rfgpt_analysis_primary_v4"
 
     payload = json.loads(chat.calls.last.request.content)
     assert payload["model"] == "rfgpt"
@@ -190,13 +191,17 @@ async def test_successful_vllm_response_records_prompt_and_preprocessing(tmp_pat
     assert "no duplicate findings" in prompt
     assert "compact single-line JSON" in prompt
     assert "quality_flags may contain only these RF-only values" in prompt
+    assert "technologies or signals contains" in prompt
+    assert "any finding" in prompt
+    assert "must not claim no signal" in prompt
+    assert "Do not create contradictory findings" in prompt
     assert "Do not make non-RF attribution" in payload["messages"][0]["content"]
     assert "cheating" not in payload["messages"][0]["content"].lower()
     assert "at most one primary technology finding" in payload["messages"][0]["content"]
     assert "no Markdown" in payload["messages"][0]["content"]
     response_format = payload["response_format"]
     assert response_format["type"] == "json_schema"
-    assert response_format["json_schema"]["name"] == "rfgpt_analysis_primary_v3"
+    assert response_format["json_schema"]["name"] == "rfgpt_analysis_primary_v4"
     assert response_format["json_schema"]["strict"] is True
     schema = response_format["json_schema"]["schema"]
     assert schema["additionalProperties"] is False
@@ -262,6 +267,54 @@ async def test_live_no_signal_response_filters_non_rf_quality_flags(tmp_path: Pa
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_live_contradictory_payload_becomes_semantic_inconsistency(
+    tmp_path: Path,
+) -> None:
+    content = json.dumps(
+        {
+            "technologies": [
+                {
+                    "label": "chirp",
+                    "model_score": None,
+                    "observation": "chirp signal",
+                    "evidence": ["capture_id:d696c4ee-eb01-40a3-ab08-0962724cdcc3"],
+                }
+            ],
+            "signals": [
+                {
+                    "label": "tone",
+                    "observation": "tone carrier",
+                    "frequency_start_hz": 2440000000,
+                    "frequency_end_hz": 2440000000,
+                    "evidence": ["capture_id:d696c4ee-eb01-40a3-ab08-0962724cdcc3"],
+                }
+            ],
+            "overall_assessment": "no_signal",
+            "quality_flags": [],
+        }
+    )
+    raw = {
+        "choices": [{"finish_reason": "stop", "message": {"content": content}}],
+        "usage": {"completion_tokens": 35},
+    }
+    _mock_ready()
+    respx.post("http://vllm.local/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json=raw)
+    )
+
+    result = await LocalVLLMRFGPTAdapter(_settings()).analyze(_request(_png(tmp_path / "a.png")))
+
+    assert result.status == "parser_failed"
+    assert result.parser_valid is False
+    assert result.technologies == []
+    assert result.signals == []
+    assert result.quality_flags == ["parser_failed", SEMANTIC_INCONSISTENCY]
+    assert "Semantic inconsistency" in result.overall_assessment
+    assert json.loads(result.raw_response) == raw
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_empty_findings_and_allowed_rf_quality_flags_are_valid(tmp_path: Path) -> None:
     content = json.dumps(
         {
@@ -278,6 +331,53 @@ async def test_empty_findings_and_allowed_rf_quality_flags_are_valid(tmp_path: P
     assert result.technologies == []
     assert result.signals == []
     assert result.quality_flags == ["low_snr", "uncertain"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_empty_findings_with_no_signal_quality_flag_succeeds(tmp_path: Path) -> None:
+    content = json.dumps(
+        {
+            "technologies": [],
+            "signals": [],
+            "overall_assessment": "No signal is observable in this RF snapshot.",
+            "quality_flags": ["no_signal"],
+        }
+    )
+    result, _ = await _analyze_content(tmp_path, content)
+
+    assert result.status == "succeeded"
+    assert result.parser_valid is True
+    assert result.technologies == []
+    assert result.signals == []
+    assert result.quality_flags == ["no_signal"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_non_empty_findings_with_neutral_assessment_succeeds(tmp_path: Path) -> None:
+    content = _valid_content()
+    result, _ = await _analyze_content(tmp_path, content)
+
+    assert result.status == "succeeded"
+    assert result.parser_valid is True
+    assert result.technologies[0].label == "rf-burst-like"
+    assert result.signals == []
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_no_signal_quality_flag_plus_findings_fails(tmp_path: Path) -> None:
+    payload = json.loads(_valid_content())
+    payload["quality_flags"] = ["no_signal"]
+    result, raw = await _analyze_content(tmp_path, json.dumps(payload))
+
+    assert result.status == "parser_failed"
+    assert result.parser_valid is False
+    assert result.technologies == []
+    assert result.signals == []
+    assert result.quality_flags == ["parser_failed", SEMANTIC_INCONSISTENCY]
+    assert json.loads(result.raw_response) == raw
 
 
 @pytest.mark.asyncio

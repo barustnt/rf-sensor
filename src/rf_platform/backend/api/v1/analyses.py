@@ -22,6 +22,14 @@ from rf_platform.common.time import utc_now
 router = APIRouter(prefix="/api/v1", tags=["analyses"])
 
 LIMITATION_NOTICE = "Model output is an RF-GPT observation, not verified ground truth."
+NON_RETRYABLE_JOB_ERROR_CATEGORIES = {"semantic_inconsistency"}
+
+
+def _job_retry_eligible(job: models.AnalysisJob) -> bool:
+    return (
+        job.status in {"failed", "deadletter"}
+        and job.error_category not in NON_RETRYABLE_JOB_ERROR_CATEGORIES
+    )
 
 
 def _run_to_dict(run: models.ModelRun) -> dict[str, object]:
@@ -279,8 +287,8 @@ async def retry_job(
     job = await session.get(models.AnalysisJob, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
-    if job.status not in {"failed", "deadletter"}:
-        raise HTTPException(status_code=409, detail="only failed or dead-letter jobs are retryable")
+    if not _job_retry_eligible(job):
+        raise HTTPException(status_code=409, detail="job is not retryable")
     previous_status = job.status
     actor = payload.get("actor", "operator")
     job.status = "pending"
@@ -368,7 +376,7 @@ async def list_jobs(
             "error_message": job.error_message,
             "started_at_utc": job.started_at_utc.isoformat() if job.started_at_utc else None,
             "completed_at_utc": job.completed_at_utc.isoformat() if job.completed_at_utc else None,
-            "retry_eligible": job.status in {"failed", "deadletter"},
+            "retry_eligible": _job_retry_eligible(job),
         }
         for job in rows
     ]

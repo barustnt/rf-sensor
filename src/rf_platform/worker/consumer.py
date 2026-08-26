@@ -14,10 +14,10 @@ from rf_platform.common.time import utc_now
 from rf_platform.contracts.analysis import AnalysisRequest
 from rf_platform.worker.correlation import correlate_result
 from rf_platform.worker.rfgpt.base import RFGPTAdapter
-from rf_platform.worker.rfgpt.local import RFGPTAdapterError
+from rf_platform.worker.rfgpt.local import SEMANTIC_INCONSISTENCY, RFGPTAdapterError
 from rf_platform.worker.validation import validate_analysis_result
 
-PROMPT_VERSION = "technology-detection-primary-v3"
+PROMPT_VERSION = "technology-detection-primary-v4"
 
 
 class WorkerProcessor:
@@ -208,12 +208,27 @@ class WorkerProcessor:
                 message = f"Analysis job {job.job_id} completed"
                 outcome = "succeeded"
             else:
-                job.status = "failed"
-                job.error_category = "parser_failure"
-                job.error_message = "RF-GPT output failed constrained JSON parsing"
-                event_type = "analysis_parser_failed"
+                semantic_inconsistency = SEMANTIC_INCONSISTENCY in result.quality_flags
+                job.status = "deadletter" if semantic_inconsistency else "failed"
+                job.error_category = (
+                    SEMANTIC_INCONSISTENCY if semantic_inconsistency else "parser_failure"
+                )
+                job.error_message = (
+                    "RF-GPT output was internally inconsistent; raw response preserved"
+                    if semantic_inconsistency
+                    else "RF-GPT output failed constrained JSON parsing"
+                )
+                event_type = (
+                    "analysis_semantic_inconsistency"
+                    if semantic_inconsistency
+                    else "analysis_parser_failed"
+                )
                 severity = "error"
-                message = f"Analysis job {job.job_id} produced parser-invalid output"
+                message = (
+                    f"Analysis job {job.job_id} produced semantically inconsistent output"
+                    if semantic_inconsistency
+                    else f"Analysis job {job.job_id} produced parser-invalid output"
+                )
                 outcome = "failed"
             job.completed_at_utc = result.completed_at_utc
             job.updated_at_utc = utc_now()

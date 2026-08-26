@@ -22,9 +22,9 @@ runs in Conda environment `rf-intel`; the VLM server runs separately in `vllm-en
 - Observed CPU-offloaded generation speed is about 1 token/second on the validated local runtime;
   a 256-token attempt measured 250.6 seconds and still reached `finish_reason="length"`.
 - Preprocessing: `atheer-hann-v1`, documented in `docs/rf-preprocessing.md`.
-- Prompt contract: `technology-detection-primary-v3`, constrained JSON with no non-RF
+- Prompt contract: `technology-detection-primary-v4`, constrained JSON with no non-RF
   attribution, identity, ownership, or behavioral conclusions.
-- Response schema: `rfgpt_analysis_primary_v3`. The only model-supplied RF quality flags accepted
+- Response schema: `rfgpt_analysis_primary_v4`. The only model-supplied RF quality flags accepted
   as trusted structured output are `no_signal`, `low_snr`, `uncertain`, `interference`,
   `clipping_suspected`, and `limited_bandwidth`; other flags are preserved in the raw response and
   filtered from trusted output.
@@ -89,10 +89,13 @@ curl -fsS http://127.0.0.1:8090/v1/models
 
 The platform adapter checks both endpoints and verifies that `rfgpt` is present in `/v1/models`.
 It sends the RF spectrogram as a lossless PNG data URL before the text prompt and requests strict,
-bounded structured JSON through `response_format` using schema `rfgpt_analysis_primary_v3`.
+bounded structured JSON through `response_format` using schema `rfgpt_analysis_primary_v4`.
 The worker also validates required keys, per-image item limits, string lengths, numeric ranges, and
 the configured job model identity application-side before trusting output. Empty technology and
 signal arrays are a valid no-observation result.
+Internally inconsistent output, such as a no-signal assessment combined with non-empty findings, is
+stored in full as raw response but rejected from trusted findings with `semantic_inconsistency` and
+does not produce an event or alert.
 
 The API and worker must be started with the same RF-GPT configuration:
 

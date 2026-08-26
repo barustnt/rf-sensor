@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from rf_platform.backend.db import models
 from rf_platform.common.ids import new_id
 from rf_platform.common.time import utc_now
 from rf_platform.contracts.analysis import AnalysisResult
+from rf_platform.worker.rfgpt.local import (
+    result_has_no_signal_marker,
+    result_is_semantically_inconsistent,
+)
 from rf_platform.worker.rules import RULE_ID, RULE_VERSION, should_create_event
 
 
@@ -15,9 +20,15 @@ async def correlate_result(
     result: AnalysisResult,
 ) -> models.Event | None:
     labels = [finding.label for finding in result.technologies]
-    if not should_create_event(labels):
+    if (
+        result.status != "succeeded"
+        or not result.parser_valid
+        or not should_create_event(labels)
+        or result_has_no_signal_marker(result)
+        or result_is_semantically_inconsistent(result)
+    ):
         return None
-    existing = await session.get(models.Event, result.analysis_id)
+    existing = await _event_for_analysis(session, result.analysis_id)
     if existing is not None:
         return existing
     now = utc_now()
@@ -38,7 +49,11 @@ async def correlate_result(
         capture_ids=[capture.capture_id],
         analysis_ids=[result.analysis_id],
         findings=[finding.model_dump(mode="json") for finding in result.technologies],
-        summary=f"Mock RF-GPT observed {', '.join(labels)} on sensor {capture.sensor_id}.",
+        summary=(
+            f"Unverified {result.model.name} model observation "
+            f"(adapter={result.model.adapter}, version={result.model.version}): "
+            f"{', '.join(labels)} on sensor {capture.sensor_id}."
+        ),
         evidence=evidence,
         rule_id=RULE_ID,
         rule_version=RULE_VERSION,
@@ -63,8 +78,8 @@ async def correlate_result(
             rule_version=RULE_VERSION,
             status="open",
             reason=(
-                "Configured Milestone 1 rule creates an event for structured "
-                "technology observations."
+                "An unverified structured model finding triggered the configured "
+                "technology-observation rule."
             ),
             thresholds={"minimum_findings": 1},
             evidence=evidence,
@@ -73,3 +88,16 @@ async def correlate_result(
         )
     )
     return event
+
+
+async def _event_for_analysis(session: AsyncSession, analysis_id: str) -> models.Event | None:
+    result = await session.execute(
+        select(models.Event)
+        .join(models.EventEvidence, models.EventEvidence.event_id == models.Event.event_id)
+        .where(
+            models.EventEvidence.target_type == "analysis",
+            models.EventEvidence.target_id == analysis_id,
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none()

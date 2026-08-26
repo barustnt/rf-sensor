@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import pytest
 
+from rf_platform.backend.api.v1.analyses import _job_retry_eligible
 from rf_platform.backend.db import models
 from rf_platform.common.config import Settings
 from rf_platform.worker.consumer import PROMPT_VERSION, WorkerProcessor
@@ -95,6 +96,14 @@ def _job(
         completed_at_utc=None,
         updated_at_utc=None,
     )
+
+
+def test_semantic_inconsistency_job_category_is_non_retryable() -> None:
+    job = _job(model_version="Qwen2.5-VL-7B-rfa-wtr-v2-joint")
+    job.status = "deadletter"
+    job.error_category = "semantic_inconsistency"
+
+    assert _job_retry_eligible(cast(Any, job)) is False
 
 
 @pytest.mark.asyncio
