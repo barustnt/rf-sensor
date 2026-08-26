@@ -1,0 +1,19 @@
+name: rf-b210
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - numpy=2.2.6
+  - uhd=4.9.0.1
+  - scipy
+  - pillow
+  - matplotlib
+  - pyyaml
+  - httpx
+  - psutil
+  - structlog
+  - pydantic
+  - pydantic-settings
+  - pip:
+      - -e .[dev]

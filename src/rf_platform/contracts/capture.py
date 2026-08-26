@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -19,6 +19,7 @@ class RadioSettings(VersionedContract):
     gain_mode: Literal["manual", "auto"] = "manual"
     gain_db: float | None = None
     antenna: str | None = None
+    hardware: dict[str, Any] = Field(default_factory=dict)
 
 
 class CaptureTiming(VersionedContract):
@@ -39,6 +40,7 @@ class PreprocessingSettings(VersionedContract):
     include_axes: bool = False
     time_axis_direction: str = "left-to-right"
     frequency_axis_direction: str = "low-to-high"
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class PreprocessingProfile(VersionedContract):

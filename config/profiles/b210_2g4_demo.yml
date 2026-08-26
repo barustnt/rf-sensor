@@ -1,0 +1,31 @@
+schema_version: "1.0"
+profile_id: b210_2g4_demo
+description: Receive-only USRP B210 2.4 GHz validated local demo profile
+enabled: true
+schedule:
+  mode: continuous
+radio:
+  center_frequency_hz: 2440000000
+  sample_rate_sps: 20000000
+  bandwidth_hz: 20000000
+  gain_mode: manual
+  gain_db: 30
+  antenna: RX2
+capture:
+  duration_ms: 53
+  interval_ms: 1000
+preprocessing:
+  pipeline_version: atheer-hann-v1
+  fft_size: 512
+  hop_size: 512
+  window: hann
+  output_width_px: 512
+  output_height_px: 512
+  color_map: viridis
+  include_axes: false
+  db_min: -110
+  db_max: -20
+retention:
+  upload_spectrogram: true
+  upload_iq: never
+  local_iq_ring_seconds: 0

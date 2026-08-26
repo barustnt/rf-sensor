@@ -1,8 +1,8 @@
 # RF Intelligence Platform
 
-Milestones 0-3 implement a simulated end-to-end RF intelligence slice, operational dashboard
-hardening, canonical Atheer/Hann preprocessing, and a local vLLM RF-GPT adapter. Real Pluto+
-and USRP B210 sensor adapters remain out of scope.
+Milestones 0-4 implement a simulated end-to-end RF intelligence slice, operational dashboard
+hardening, canonical Atheer/Hann preprocessing, a local vLLM RF-GPT adapter, and a receive-only
+USRP B210 sensor adapter. Real Pluto+ support remains out of scope.
 
 ## Environment
 
@@ -28,6 +28,7 @@ make seed
 make api
 make worker
 make sensor-sim
+make PYTHON='conda run -n rf-b210 python' b210-local-smoke  # requires B210 hardware
 make dashboard
 make demo
 conda run -n rf-intel python scripts/run_milestone2_acceptance.py
@@ -52,6 +53,7 @@ adds an optional local vLLM adapter configured entirely through environment vari
 Retention is report-only and does not delete data. PostgreSQL and artifact backup/restore steps
 are documented in `docs/backup-restore.md`. Local RF-GPT/vLLM launch and smoke-test procedures are
 documented in `docs/rfgpt-runtime.md`.
+Receive-only B210 setup and acceptance are documented in `docs/b210-sensor.md`.
 
 ## Safety notes
 

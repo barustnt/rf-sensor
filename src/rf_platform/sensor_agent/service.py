@@ -5,6 +5,7 @@ import socket
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 import httpx
 
@@ -17,6 +18,7 @@ from rf_platform.contracts.sensor import (
     SensorRegistration,
     SpoolStatus,
 )
+from rf_platform.sensor_agent.adapters.b210 import B210SensorAdapter
 from rf_platform.sensor_agent.adapters.base import CaptureRequest, SensorAdapter
 from rf_platform.sensor_agent.adapters.simulated import SimulatedSensorAdapter
 from rf_platform.sensor_agent.health import disk_status, system_status
@@ -31,7 +33,7 @@ class SensorService:
             raise RuntimeError("RF_SENSOR_ID must be set for the sensor agent")
         self.settings = settings
         self.spool = DurableSpool(settings.spool_root, settings.spool_max_bytes)
-        self.adapter = adapter or SimulatedSensorAdapter(settings)
+        self.adapter = adapter or create_sensor_adapter(settings)
         self.state_path = settings.spool_root / "sensor-state.json"
         self.sequence = self._load_sequence()
         self.last_capture_utc: datetime | None = None
@@ -59,7 +61,7 @@ class SensorService:
             display_name=self.settings.sensor_display_name,
             adapter=self.settings.sensor_adapter,
             location=SensorLocation(room=self.settings.sensor_location),
-            groups=["campus", "simulated"],
+            groups=["campus", self.settings.sensor_adapter],
             capabilities=capabilities,
             software_version=__version__,
             hostname=socket.gethostname(),
@@ -155,3 +157,11 @@ async def try_upload_pending(settings: Settings) -> list[dict[str, object]]:
         return await service.upload_pending()
     except UploadError:
         return []
+
+
+def create_sensor_adapter(settings: Settings) -> SensorAdapter:
+    if settings.sensor_adapter == "simulated":
+        return cast(SensorAdapter, SimulatedSensorAdapter(settings))
+    if settings.sensor_adapter == "b210":
+        return cast(SensorAdapter, B210SensorAdapter(settings))
+    raise RuntimeError(f"unsupported sensor adapter: {settings.sensor_adapter}")

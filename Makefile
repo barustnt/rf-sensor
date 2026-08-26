@@ -8,7 +8,7 @@ endif
 CONDA_ENV ?= rf-intel
 COMPOSE ?= docker compose -f deploy/docker-compose.infra.yml --project-name rf-sensor
 
-.PHONY: help install infra-up infra-down migrate seed api worker sensor-sim dashboard demo m2-acceptance m3-real-smoke backup-restore-check format lint typecheck test check
+.PHONY: help install infra-up infra-down migrate seed api worker sensor-sim sensor-b210-once sensor-b210 b210-local-smoke dashboard demo m2-acceptance m3-real-smoke backup-restore-check format lint typecheck test check
 
 help: ## Show commands
 	@awk 'BEGIN {FS = ":.*##"; printf "Available targets:\n"} /^[a-zA-Z_-]+:.*##/ {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -36,6 +36,15 @@ worker: ## Run durable mock RF-GPT worker
 
 sensor-sim: ## Run one simulated sensor cycle
 	$(PYTHON) -m rf_platform.sensor_agent.main --once
+
+sensor-b210-once: ## Run one receive-only B210 sensor upload cycle
+	RF_SENSOR_ADAPTER=b210 $(PYTHON) -m rf_platform.sensor_agent.main --once
+
+sensor-b210: ## Run the continuous receive-only B210 sensor agent
+	RF_SENSOR_ADAPTER=b210 $(PYTHON) -m rf_platform.sensor_agent.main
+
+b210-local-smoke: ## Run receive-only local B210 hardware/preprocessing smoke test
+	RF_SENSOR_ADAPTER=b210 $(PYTHON) scripts/run_b210_receive_smoke.py
 
 dashboard: ## Run Gradio dashboard
 	$(PYTHON) -m rf_platform.dashboard.main

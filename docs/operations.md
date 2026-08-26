@@ -43,3 +43,10 @@ conda run -n rf-intel python scripts/verify_backup_restore.py
 ```bash
 conda run -n rf-intel python scripts/run_real_model_smoke.py
 ```
+
+## Milestone 4 receive-only B210 sensor
+
+- Use `environment-b210.yml` for UHD hardware access in `rf-b210`.
+- Keep the VLM runtime separate in `vllm-env`; do not run RF-GPT from `rf-b210`.
+- Use `docs/b210-sensor.md` for one-shot, continuous, and full-platform acceptance commands.
+- Raw IQ persistence is disabled by default with `RF_B210_PERSIST_RAW_IQ=false`.

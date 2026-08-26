@@ -54,6 +54,26 @@ class Settings(BaseSettings):
     spool_root: Path = Path(".data/spool")
     spool_max_bytes: int = 10_737_418_240
     simulated_fixture_path: Path | None = None
+    capture_interval_seconds: float = 0.0
+    sensor_retry_initial_seconds: float = 1.0
+    sensor_retry_max_seconds: float = 30.0
+
+    b210_device_args: str = ""
+    b210_serial: str = ""
+    b210_rx_channel: int = 0
+    b210_antenna: str | None = None
+    b210_center_frequency_hz: int | None = None
+    b210_sample_rate_sps: int | None = None
+    b210_bandwidth_hz: int | None = None
+    b210_gain_db: float | None = None
+    b210_sample_count: int | None = None
+    b210_receive_timeout_seconds: float = 5.0
+    b210_settling_seconds: float = 0.1
+    b210_cpu_format: str = "fc32"
+    b210_wire_format: str = "sc16"
+    b210_capture_output_dir: Path | None = None
+    b210_persist_raw_iq: bool = False
+    b210_max_recv_samples_per_chunk: int = 65_536
 
     retention_report_only: bool = True
     retention_heartbeat_days: int = 30
@@ -93,6 +113,14 @@ class Settings(BaseSettings):
             raise ValueError("Milestone 1 supports only filesystem artifact storage")
         return value
 
+    @field_validator("sensor_adapter")
+    @classmethod
+    def validate_sensor_adapter(cls, value: str) -> str:
+        allowed = {"simulated", "b210"}
+        if value not in allowed:
+            raise ValueError(f"unsupported sensor adapter: {value}")
+        return value
+
     @field_validator("rfgpt_adapter")
     @classmethod
     def validate_rfgpt_adapter(cls, value: str) -> str:
@@ -115,6 +143,46 @@ class Settings(BaseSettings):
     def validate_non_negative_float(cls, value: float) -> float:
         if value < 0:
             raise ValueError("RF-GPT inference parameters must be non-negative")
+        return value
+
+    @field_validator(
+        "capture_interval_seconds",
+        "sensor_retry_initial_seconds",
+        "sensor_retry_max_seconds",
+        "b210_receive_timeout_seconds",
+        "b210_settling_seconds",
+    )
+    @classmethod
+    def validate_non_negative_seconds(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("duration settings must be non-negative")
+        return value
+
+    @field_validator("b210_gain_db")
+    @classmethod
+    def validate_optional_non_negative_float(cls, value: float | None) -> float | None:
+        if value is not None and value < 0:
+            raise ValueError("B210 gain must be non-negative")
+        return value
+
+    @field_validator("b210_rx_channel")
+    @classmethod
+    def validate_b210_rx_channel(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("B210 RX channel must be non-negative")
+        return value
+
+    @field_validator(
+        "b210_center_frequency_hz",
+        "b210_sample_rate_sps",
+        "b210_bandwidth_hz",
+        "b210_sample_count",
+        "b210_max_recv_samples_per_chunk",
+    )
+    @classmethod
+    def validate_optional_positive_int(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("B210 integer settings must be positive")
         return value
 
     @field_validator("rfgpt_max_output_tokens")
