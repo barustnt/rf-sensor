@@ -13,6 +13,8 @@ from PIL import Image
 from rf_platform.common.config import Settings
 from rf_platform.contracts.analysis import AnalysisRequest
 from rf_platform.worker.rfgpt.local import (
+    NON_RF_FLAGS_REMOVED,
+    RF_QUALITY_FLAGS,
     LocalVLLMRFGPTAdapter,
     PermanentInputError,
     VLLMConnectionError,
@@ -57,7 +59,7 @@ def _request(path: Path) -> AnalysisRequest:
         gain_db=30.0,
         profile_id="campus_general",
         preprocessing_version="atheer-hann-v1",
-        prompt_version="technology-detection-primary-v2",
+        prompt_version="technology-detection-primary-v3",
     )
 
 
@@ -91,6 +93,16 @@ def _mock_ready() -> None:
     respx.get("http://vllm.local/v1/models").mock(
         return_value=httpx.Response(200, json={"data": [{"id": "rfgpt"}]})
     )
+
+
+async def _analyze_content(tmp_path: Path, content: str, finish_reason: str | None = "stop"):
+    _mock_ready()
+    raw = _chat_response(content, finish_reason=finish_reason)
+    respx.post("http://vllm.local/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json=raw)
+    )
+    result = await LocalVLLMRFGPTAdapter(_settings()).analyze(_request(_png(tmp_path / "a.png")))
+    return result, raw
 
 
 def test_vllm_default_generation_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -152,14 +164,14 @@ async def test_successful_vllm_response_records_prompt_and_preprocessing(tmp_pat
     assert result.status == "succeeded"
     assert result.parser_valid is True
     assert result.model.version == "Qwen2.5-VL-7B-rfa-wtr-v2-joint"
-    assert result.model.prompt_version == "technology-detection-primary-v2"
+    assert result.model.prompt_version == "technology-detection-primary-v3"
     assert result.preprocessing_version == "atheer-hann-v1"
     assert result.inference_parameters["temperature"] == 0.0
     assert result.inference_parameters["top_p"] == 1.0
     assert result.inference_parameters["repetition_penalty"] == 1.05
     assert result.inference_parameters["max_output_tokens"] == 224
-    assert result.inference_parameters["prompt_version"] == "technology-detection-primary-v2"
-    assert result.inference_parameters["response_schema"] == "rfgpt_analysis_primary_v2"
+    assert result.inference_parameters["prompt_version"] == "technology-detection-primary-v3"
+    assert result.inference_parameters["response_schema"] == "rfgpt_analysis_primary_v3"
 
     payload = json.loads(chat.calls.last.request.content)
     assert payload["model"] == "rfgpt"
@@ -177,12 +189,14 @@ async def test_successful_vllm_response_records_prompt_and_preprocessing(tmp_pat
     assert "at most one item in signals" in prompt
     assert "no duplicate findings" in prompt
     assert "compact single-line JSON" in prompt
-    assert "Never identify a person" in payload["messages"][0]["content"]
+    assert "quality_flags may contain only these RF-only values" in prompt
+    assert "Do not make non-RF attribution" in payload["messages"][0]["content"]
+    assert "cheating" not in payload["messages"][0]["content"].lower()
     assert "at most one primary technology finding" in payload["messages"][0]["content"]
     assert "no Markdown" in payload["messages"][0]["content"]
     response_format = payload["response_format"]
     assert response_format["type"] == "json_schema"
-    assert response_format["json_schema"]["name"] == "rfgpt_analysis_primary_v2"
+    assert response_format["json_schema"]["name"] == "rfgpt_analysis_primary_v3"
     assert response_format["json_schema"]["strict"] is True
     schema = response_format["json_schema"]["schema"]
     assert schema["additionalProperties"] is False
@@ -211,6 +225,106 @@ async def test_successful_vllm_response_records_prompt_and_preprocessing(tmp_pat
     assert schema["properties"]["overall_assessment"]["maxLength"] == 240
     assert schema["properties"]["quality_flags"]["maxItems"] == 2
     assert schema["properties"]["quality_flags"]["items"]["maxLength"] == 80
+    assert schema["properties"]["quality_flags"]["items"]["enum"] == list(RF_QUALITY_FLAGS)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_live_no_signal_response_filters_non_rf_quality_flags(tmp_path: Path) -> None:
+    content = json.dumps(
+        {
+            "technologies": [],
+            "signals": [],
+            "overall_assessment": "no signals present",
+            "quality_flags": ["no_people", "no_cheating"],
+        }
+    )
+    _mock_ready()
+    raw = {
+        "choices": [{"finish_reason": "stop", "message": {"content": content}}],
+        "usage": {"completion_tokens": 35},
+    }
+    respx.post("http://vllm.local/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json=raw)
+    )
+    result = await LocalVLLMRFGPTAdapter(_settings()).analyze(_request(_png(tmp_path / "a.png")))
+
+    assert result.status == "succeeded"
+    assert result.parser_valid is True
+    assert result.technologies == []
+    assert result.signals == []
+    assert result.overall_assessment == "no signals present"
+    assert result.quality_flags == [NON_RF_FLAGS_REMOVED]
+    assert "no_people" not in result.quality_flags
+    assert "no_cheating" not in result.quality_flags
+    assert json.loads(result.raw_response) == raw
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_empty_findings_and_allowed_rf_quality_flags_are_valid(tmp_path: Path) -> None:
+    content = json.dumps(
+        {
+            "technologies": [],
+            "signals": [],
+            "overall_assessment": "RF observation is limited by low SNR.",
+            "quality_flags": ["low_snr", "uncertain"],
+        }
+    )
+    result, _ = await _analyze_content(tmp_path, content)
+
+    assert result.status == "succeeded"
+    assert result.parser_valid is True
+    assert result.technologies == []
+    assert result.signals == []
+    assert result.quality_flags == ["low_snr", "uncertain"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_unsupported_quality_flags_are_removed_deterministically(tmp_path: Path) -> None:
+    content = json.dumps(
+        {
+            "technologies": [],
+            "signals": [],
+            "overall_assessment": "RF observation is limited.",
+            "quality_flags": ["uncertain", "not_an_rf_flag"],
+        }
+    )
+    result, _ = await _analyze_content(tmp_path, content)
+
+    assert result.status == "succeeded"
+    assert result.parser_valid is True
+    assert result.quality_flags == ["uncertain", NON_RF_FLAGS_REMOVED]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_evidence_and_quality_flags_do_not_trigger_substring_false_positive(
+    tmp_path: Path,
+) -> None:
+    content = json.dumps(
+        {
+            "technologies": [
+                {
+                    "label": "rf-burst",
+                    "model_score": None,
+                    "observation": "Short RF burst visible.",
+                    "evidence": ["capture_id:student-is-cheating"],
+                }
+            ],
+            "signals": [],
+            "overall_assessment": "RF-only observation.",
+            "quality_flags": ["no_cheating"],
+        }
+    )
+    result, raw = await _analyze_content(tmp_path, content)
+
+    assert result.status == "succeeded"
+    assert result.parser_valid is True
+    assert result.technologies[0].label == "rf-burst"
+    assert result.quality_flags == [NON_RF_FLAGS_REMOVED]
+    assert json.loads(result.raw_response) == raw
 
 
 @pytest.mark.asyncio
@@ -302,32 +416,108 @@ async def test_finish_reason_length_is_truncated_parser_failure(tmp_path: Path) 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_prohibited_claims_are_parser_invalid_and_untrusted(tmp_path: Path) -> None:
-    _mock_ready()
+async def test_positive_prohibited_overall_assessment_is_parser_invalid(
+    tmp_path: Path,
+) -> None:
+    content = json.dumps(
+        {
+            "technologies": [],
+            "signals": [],
+            "overall_assessment": "The student is cheating.",
+            "quality_flags": [],
+        }
+    )
+    result, raw = await _analyze_content(tmp_path, content)
+    assert result.status == "parser_failed"
+    assert result.parser_valid is False
+    assert result.technologies == []
+    assert result.signals == []
+    assert "Parser failed" in result.overall_assessment
+    assert json.loads(result.raw_response) == raw
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_positive_prohibited_finding_observation_is_parser_invalid(
+    tmp_path: Path,
+) -> None:
     content = json.dumps(
         {
             "technologies": [
                 {
-                    "label": "disciplinary-claim",
+                    "label": "rf-burst",
                     "model_score": None,
                     "observation": "The person is cheating.",
                     "evidence": ["capture_id:capture-1"],
                 }
             ],
             "signals": [],
-            "overall_assessment": "The person is cheating.",
+            "overall_assessment": "RF-only observation.",
             "quality_flags": [],
         }
     )
-    respx.post("http://vllm.local/v1/chat/completions").mock(
-        return_value=httpx.Response(200, json=_chat_response(content))
-    )
-    result = await LocalVLLMRFGPTAdapter(_settings()).analyze(_request(_png(tmp_path / "a.png")))
+    result, raw = await _analyze_content(tmp_path, content)
     assert result.status == "parser_failed"
     assert result.parser_valid is False
     assert result.technologies == []
     assert result.signals == []
     assert "Parser failed" in result.overall_assessment
+    assert json.loads(result.raw_response) == raw
+
+
+@pytest.mark.asyncio
+@respx.mock
+@pytest.mark.parametrize(
+    "mutator",
+    [
+        lambda payload: payload.update({"extra": "nope"}),
+        lambda payload: payload.update({"technologies": [{}, {}]}),
+        lambda payload: payload["technologies"].append(
+            {
+                "label": "x" * 65,
+                "model_score": None,
+                "observation": "RF observation.",
+                "evidence": [],
+            }
+        ),
+        lambda payload: payload["technologies"].append(
+            {
+                "label": "rf",
+                "model_score": 1.5,
+                "observation": "RF observation.",
+                "evidence": [],
+            }
+        ),
+        lambda payload: payload["signals"].append(
+            {
+                "label": "rf",
+                "observation": "x" * 161,
+                "frequency_start_hz": None,
+                "frequency_end_hz": None,
+                "evidence": [],
+            }
+        ),
+        lambda payload: payload.update({"overall_assessment": "x" * 241}),
+        lambda payload: payload.update({"quality_flags": ["low_snr", "uncertain", "extra"]}),
+    ],
+)
+async def test_application_side_validation_enforces_schema_limits(
+    tmp_path: Path,
+    mutator: Any,
+) -> None:
+    payload: dict[str, Any] = {
+        "technologies": [],
+        "signals": [],
+        "overall_assessment": "RF-only observation.",
+        "quality_flags": [],
+    }
+    mutator(payload)
+    result, raw = await _analyze_content(tmp_path, json.dumps(payload))
+    assert result.status == "parser_failed"
+    assert result.parser_valid is False
+    assert result.technologies == []
+    assert result.signals == []
+    assert json.loads(result.raw_response) == raw
 
 
 @pytest.mark.asyncio

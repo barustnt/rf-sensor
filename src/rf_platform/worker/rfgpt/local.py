@@ -13,6 +13,7 @@ import httpx
 
 from rf_platform.common.config import Settings
 from rf_platform.common.ids import new_id
+from rf_platform.common.logging import get_logger
 from rf_platform.common.time import utc_now
 from rf_platform.contracts.analysis import (
     AnalysisRequest,
@@ -23,15 +24,34 @@ from rf_platform.contracts.analysis import (
     TechnologyFinding,
 )
 
-PROMPT_VERSION = "technology-detection-primary-v2"
-RESPONSE_SCHEMA_NAME = "rfgpt_analysis_primary_v2"
+PROMPT_VERSION = "technology-detection-primary-v3"
+RESPONSE_SCHEMA_NAME = "rfgpt_analysis_primary_v3"
+RF_QUALITY_FLAGS = (
+    "no_signal",
+    "low_snr",
+    "uncertain",
+    "interference",
+    "clipping_suspected",
+    "limited_bandwidth",
+)
+NON_RF_FLAGS_REMOVED = "non_rf_flags_removed"
+MAX_TECHNOLOGIES = 1
+MAX_SIGNALS = 1
+MAX_EVIDENCE_ITEMS = 2
+MAX_LABEL_LENGTH = 64
+MAX_OBSERVATION_LENGTH = 160
+MAX_OVERALL_ASSESSMENT_LENGTH = 240
+MAX_QUALITY_FLAGS = 2
+MAX_QUALITY_FLAG_LENGTH = 80
+logger = get_logger("rf_platform.rfgpt.local")
+
 SYSTEM_PROMPT = """You are RF-GPT running inside a local authorized RF monitoring system.
 Return compact single-line JSON only: no Markdown, no preamble, no trailing prose.
 Treat the spectrogram as one RF observation, not proof of identity.
 Report at most one primary technology finding and at most one primary signal finding.
 Do not duplicate findings.
-Never identify a person, never claim cheating, and never infer payload contents. If evidence is
-insufficient, use empty arrays and concise limitations instead of inventing labels or scores."""
+Do not make non-RF attribution, identity, ownership, or behavioral conclusions. If evidence is
+insufficient, use empty arrays and concise RF limitations instead of inventing labels or scores."""
 
 USER_PROMPT_TEMPLATE = """Analyze the attached lossless PNG RF spectrogram as one image.
 
@@ -70,8 +90,10 @@ Respond with one compact single-line JSON object only, matching this shape:
 }}
 
 Rules: use at most one item in technologies and at most one item in signals; no duplicate findings;
-observations must be concise; use null for model_score unless calibrated; do not invent confidence
-scores, people, device owners, identities, payloads, or disciplinary claims."""
+observations must be concise; quality_flags may contain only these RF-only values:
+no_signal, low_snr, uncertain, interference, clipping_suspected, limited_bandwidth. Use null for
+model_score unless calibrated; do not invent confidence scores, payload contents, or non-RF
+attribution, identity, ownership, or behavioral conclusions."""
 
 RF_GPT_ANALYSIS_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -80,23 +102,31 @@ RF_GPT_ANALYSIS_SCHEMA: dict[str, Any] = {
         "technologies": {
             "type": "array",
             "minItems": 0,
-            "maxItems": 1,
+            "maxItems": MAX_TECHNOLOGIES,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
-                    "label": {"type": "string", "minLength": 1, "maxLength": 64},
+                    "label": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": MAX_LABEL_LENGTH,
+                    },
                     "model_score": {
                         "type": ["number", "null"],
                         "minimum": 0,
                         "maximum": 1,
                     },
-                    "observation": {"type": "string", "minLength": 1, "maxLength": 160},
+                    "observation": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": MAX_OBSERVATION_LENGTH,
+                    },
                     "evidence": {
                         "type": "array",
                         "minItems": 0,
-                        "maxItems": 2,
-                        "items": {"type": "string", "maxLength": 160},
+                        "maxItems": MAX_EVIDENCE_ITEMS,
+                        "items": {"type": "string", "maxLength": MAX_OBSERVATION_LENGTH},
                     },
                 },
                 "required": ["label", "model_score", "observation", "evidence"],
@@ -105,13 +135,21 @@ RF_GPT_ANALYSIS_SCHEMA: dict[str, Any] = {
         "signals": {
             "type": "array",
             "minItems": 0,
-            "maxItems": 1,
+            "maxItems": MAX_SIGNALS,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
-                    "label": {"type": "string", "minLength": 1, "maxLength": 64},
-                    "observation": {"type": "string", "minLength": 1, "maxLength": 160},
+                    "label": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": MAX_LABEL_LENGTH,
+                    },
+                    "observation": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": MAX_OBSERVATION_LENGTH,
+                    },
                     "frequency_start_hz": {
                         "type": ["integer", "null"],
                         "minimum": 0,
@@ -123,8 +161,8 @@ RF_GPT_ANALYSIS_SCHEMA: dict[str, Any] = {
                     "evidence": {
                         "type": "array",
                         "minItems": 0,
-                        "maxItems": 2,
-                        "items": {"type": "string", "maxLength": 160},
+                        "maxItems": MAX_EVIDENCE_ITEMS,
+                        "items": {"type": "string", "maxLength": MAX_OBSERVATION_LENGTH},
                     },
                 },
                 "required": [
@@ -136,12 +174,20 @@ RF_GPT_ANALYSIS_SCHEMA: dict[str, Any] = {
                 ],
             },
         },
-        "overall_assessment": {"type": "string", "minLength": 1, "maxLength": 240},
+        "overall_assessment": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": MAX_OVERALL_ASSESSMENT_LENGTH,
+        },
         "quality_flags": {
             "type": "array",
             "minItems": 0,
-            "maxItems": 2,
-            "items": {"type": "string", "maxLength": 80},
+            "maxItems": MAX_QUALITY_FLAGS,
+            "items": {
+                "type": "string",
+                "maxLength": MAX_QUALITY_FLAG_LENGTH,
+                "enum": list(RF_QUALITY_FLAGS),
+            },
         },
     },
     "required": ["technologies", "signals", "overall_assessment", "quality_flags"],
@@ -306,6 +352,13 @@ class LocalVLLMRFGPTAdapter:
         latency_ms = max(1, int((time.perf_counter() - t0) * 1000))
         content, finish_reason = self._message_content_and_finish_reason(raw_response)
         if finish_reason == "length":
+            logger.warning(
+                "rfgpt_parser_failed",
+                job_id=request.job_id,
+                capture_id=request.capture_id,
+                error="TruncatedOutput",
+                message="Model output reached the completion-token limit",
+            )
             return self._parser_failed_result(
                 request=request,
                 raw_response=raw_response,
@@ -372,9 +425,9 @@ class LocalVLLMRFGPTAdapter:
             ]
             signals = [SignalFinding.model_validate(item) for item in payload["signals"]]
             overall = str(payload["overall_assessment"])
-            quality_flags = [str(item) for item in payload["quality_flags"]]
+            quality_flags = _trusted_quality_flags(payload["quality_flags"])
             if _contains_prohibited_claim(payload):
-                raise ValueError("model output contained prohibited identity/cheating claim")
+                raise ValueError("model output contained prohibited non-RF assertion")
             return AnalysisResult(
                 analysis_id=new_id(),
                 capture_id=request.capture_id,
@@ -398,6 +451,13 @@ class LocalVLLMRFGPTAdapter:
                 inference_parameters=self._inference_parameters(request),
             )
         except Exception as exc:
+            logger.warning(
+                "rfgpt_parser_failed",
+                job_id=request.job_id,
+                capture_id=request.capture_id,
+                error=exc.__class__.__name__,
+                message=str(exc),
+            )
             return self._parser_failed_result(
                 request=request,
                 raw_response=raw_response,
@@ -623,24 +683,201 @@ def _validate_structured_payload(payload: dict[str, Any]) -> None:
     missing = required - payload.keys()
     if missing:
         raise ValueError(f"model JSON missing required keys: {sorted(missing)}")
-    if not isinstance(payload["technologies"], list):
-        raise ValueError("technologies must be a list")
-    if not isinstance(payload["signals"], list):
-        raise ValueError("signals must be a list")
-    if not isinstance(payload["overall_assessment"], str):
-        raise ValueError("overall_assessment must be a string")
-    if not isinstance(payload["quality_flags"], list):
+    extra = set(payload) - required
+    if extra:
+        raise ValueError(f"model JSON contained unsupported keys: {sorted(extra)}")
+
+    _validate_finding_list(
+        name="technologies",
+        items=payload["technologies"],
+        max_items=MAX_TECHNOLOGIES,
+        required_keys={"label", "model_score", "observation", "evidence"},
+        allow_model_score=True,
+        allow_frequency=False,
+    )
+    _validate_finding_list(
+        name="signals",
+        items=payload["signals"],
+        max_items=MAX_SIGNALS,
+        required_keys={
+            "label",
+            "observation",
+            "frequency_start_hz",
+            "frequency_end_hz",
+            "evidence",
+        },
+        allow_model_score=False,
+        allow_frequency=True,
+    )
+    _validate_string(
+        "overall_assessment",
+        payload["overall_assessment"],
+        min_length=1,
+        max_length=MAX_OVERALL_ASSESSMENT_LENGTH,
+    )
+    flags = payload["quality_flags"]
+    if not isinstance(flags, list):
         raise ValueError("quality_flags must be a list")
+    if len(flags) > MAX_QUALITY_FLAGS:
+        raise ValueError(f"quality_flags must contain at most {MAX_QUALITY_FLAGS} items")
+    for index, flag in enumerate(flags):
+        _validate_string(
+            f"quality_flags[{index}]",
+            flag,
+            min_length=1,
+            max_length=MAX_QUALITY_FLAG_LENGTH,
+        )
 
 
 def _contains_prohibited_claim(payload: dict[str, Any]) -> bool:
-    text = json.dumps(payload, sort_keys=True).lower()
-    prohibited = [
-        "cheating",
-        "cheater",
+    return any(_text_contains_prohibited_claim(text) for text in _semantic_assertion_text(payload))
+
+
+def _validate_finding_list(
+    *,
+    name: str,
+    items: Any,
+    max_items: int,
+    required_keys: set[str],
+    allow_model_score: bool,
+    allow_frequency: bool,
+) -> None:
+    if not isinstance(items, list):
+        raise ValueError(f"{name} must be a list")
+    if len(items) > max_items:
+        raise ValueError(f"{name} must contain at most {max_items} item(s)")
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise ValueError(f"{name}[{index}] must be an object")
+        missing = required_keys - item.keys()
+        if missing:
+            raise ValueError(f"{name}[{index}] missing required keys: {sorted(missing)}")
+        extra = set(item) - required_keys
+        if extra:
+            raise ValueError(f"{name}[{index}] contained unsupported keys: {sorted(extra)}")
+        _validate_string(
+            f"{name}[{index}].label",
+            item["label"],
+            min_length=1,
+            max_length=MAX_LABEL_LENGTH,
+        )
+        _validate_string(
+            f"{name}[{index}].observation",
+            item["observation"],
+            min_length=1,
+            max_length=MAX_OBSERVATION_LENGTH,
+        )
+        _validate_evidence(f"{name}[{index}].evidence", item["evidence"])
+        if allow_model_score:
+            _validate_model_score(f"{name}[{index}].model_score", item["model_score"])
+        if allow_frequency:
+            start = _validate_optional_frequency(
+                f"{name}[{index}].frequency_start_hz",
+                item["frequency_start_hz"],
+            )
+            end = _validate_optional_frequency(
+                f"{name}[{index}].frequency_end_hz",
+                item["frequency_end_hz"],
+            )
+            if start is not None and end is not None and start > end:
+                raise ValueError(f"{name}[{index}] frequency_start_hz exceeds frequency_end_hz")
+
+
+def _validate_string(name: str, value: Any, *, min_length: int, max_length: int) -> None:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string")
+    if len(value) < min_length:
+        raise ValueError(f"{name} must not be empty")
+    if len(value) > max_length:
+        raise ValueError(f"{name} exceeds maximum length {max_length}")
+
+
+def _validate_evidence(name: str, value: Any) -> None:
+    if not isinstance(value, list):
+        raise ValueError(f"{name} must be a list")
+    if len(value) > MAX_EVIDENCE_ITEMS:
+        raise ValueError(f"{name} must contain at most {MAX_EVIDENCE_ITEMS} items")
+    for index, item in enumerate(value):
+        _validate_string(
+            f"{name}[{index}]",
+            item,
+            min_length=1,
+            max_length=MAX_OBSERVATION_LENGTH,
+        )
+
+
+def _validate_model_score(name: str, value: Any) -> None:
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{name} must be a number or null")
+    if not 0 <= float(value) <= 1:
+        raise ValueError(f"{name} must be between 0 and 1")
+
+
+def _validate_optional_frequency(name: str, value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer or null")
+    if value < 0:
+        raise ValueError(f"{name} must be non-negative")
+    return value
+
+
+def _trusted_quality_flags(raw_flags: list[Any]) -> list[str]:
+    trusted: list[str] = []
+    removed = False
+    for item in raw_flags:
+        flag = str(item)
+        if flag in RF_QUALITY_FLAGS:
+            if flag not in trusted:
+                trusted.append(flag)
+        else:
+            removed = True
+    if removed and len(trusted) < MAX_QUALITY_FLAGS:
+        trusted.append(NON_RF_FLAGS_REMOVED)
+    return trusted[:MAX_QUALITY_FLAGS]
+
+
+def _semantic_assertion_text(payload: dict[str, Any]) -> list[str]:
+    texts = [str(payload.get("overall_assessment", ""))]
+    for collection_name in ("technologies", "signals"):
+        collection = payload.get(collection_name, [])
+        if not isinstance(collection, list):
+            continue
+        for item in collection:
+            if not isinstance(item, dict):
+                continue
+            for field in ("label", "observation"):
+                if field in item:
+                    texts.append(str(item[field]))
+    return texts
+
+
+def _text_contains_prohibited_claim(text: str) -> bool:
+    normalized = " ".join(text.lower().replace("-", " ").split())
+    if not normalized:
+        return False
+    identity_terms = [
         "student is",
         "person is",
+        "individual is",
+        "candidate is",
         "identified person",
+        "person identified",
+        "student identified",
         "device owner",
+        "owner is",
+        "belongs to",
+        "owned by",
+        "identity is",
     ]
-    return any(term in text for term in prohibited)
+    if any(term in normalized for term in identity_terms):
+        return True
+    if "cheater" in normalized:
+        return True
+    if "cheating" in normalized:
+        negative_terms = ("no cheating", "not cheating", "without cheating")
+        return not any(term in normalized for term in negative_terms)
+    return False

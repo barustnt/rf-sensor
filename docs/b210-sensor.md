@@ -140,15 +140,29 @@ persistence, schema validity, provenance, and dashboard visibility.
 Terminal 1:
 
 ```bash
+export RF_DATABASE_URL="postgresql+asyncpg://rf_platform:${RF_POSTGRES_PASSWORD}@127.0.0.1:5432/rf_platform"
+export RF_RFGPT_ADAPTER=vllm
+export RF_RFGPT_ENDPOINT=http://127.0.0.1:8090/v1
+export RF_RFGPT_MODEL_NAME=rfgpt
+export RF_RFGPT_MODEL_VERSION=Qwen2.5-VL-7B-rfa-wtr-v2-joint
+export RF_RFGPT_REQUEST_TIMEOUT_SECONDS=300
+export RF_RFGPT_REPETITION_PENALTY=1.05
+export RF_RFGPT_MAX_OUTPUT_TOKENS=224
+export RF_WORKER_CONCURRENCY=1
 make infra-up
 make PYTHON='conda run -n rf-intel python' migrate
 make PYTHON='conda run -n rf-intel python' seed
 make PYTHON='conda run -n rf-intel python' api
 ```
 
+Set `RF_POSTGRES_PASSWORD` locally before constructing `RF_DATABASE_URL`; do not paste or log the
+password. The API and worker must use the same `RF_RFGPT_ADAPTER`, model name/version,
+prompt/schema code revision, and `RF_DATABASE_URL` so jobs are targeted at the worker's model.
+
 Terminal 2, with the local vLLM server already running per `docs/rfgpt-runtime.md`:
 
 ```bash
+RF_DATABASE_URL="postgresql+asyncpg://rf_platform:${RF_POSTGRES_PASSWORD}@127.0.0.1:5432/rf_platform" \
 RF_RFGPT_ADAPTER=vllm \
 RF_RFGPT_ENDPOINT=http://127.0.0.1:8090/v1 \
 RF_RFGPT_MODEL_NAME=rfgpt \

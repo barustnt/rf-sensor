@@ -66,7 +66,7 @@ async def test_local_vllm_adapter_against_mocked_openai_http_endpoint(tmp_path: 
             gain_db=30,
             profile_id="integration",
             preprocessing_version="atheer-hann-v1",
-            prompt_version="technology-detection-primary-v2",
+            prompt_version="technology-detection-primary-v3",
         )
     )
 
@@ -75,3 +75,4 @@ async def test_local_vllm_adapter_against_mocked_openai_http_endpoint(tmp_path: 
     assert result.signals[0].label == "wideband-energy"
     assert result.technologies == []
     assert result.preprocessing_version == "atheer-hann-v1"
+    assert result.quality_flags == ["non_rf_flags_removed"]

@@ -17,6 +17,8 @@ from rf_platform.worker.rfgpt.base import RFGPTAdapter
 from rf_platform.worker.rfgpt.local import RFGPTAdapterError
 from rf_platform.worker.validation import validate_analysis_result
 
+PROMPT_VERSION = "technology-detection-primary-v3"
+
 
 class WorkerProcessor:
     def __init__(
@@ -46,6 +48,10 @@ class WorkerProcessor:
             ).scalar_one_or_none()
             if job.status == "succeeded" and existing_run is not None:
                 return "duplicate"
+            mismatch = self._model_configuration_mismatch(job)
+            if mismatch is not None:
+                await self._fail_job(session, job, "model_configuration_mismatch", mismatch)
+                return "failed"
             capture = await session.get(models.Capture, job.capture_id)
             if capture is None:
                 await self._fail_job(session, job, "permanent_input_failure", "capture not found")
@@ -104,7 +110,7 @@ class WorkerProcessor:
             gain_db=capture.radio.get("gain_db"),
             profile_id=capture.profile_id,
             preprocessing_version=capture.preprocessing.get("pipeline_version"),
-            prompt_version=str(payload.get("prompt_version", "technology-detection-primary-v2")),
+            prompt_version=str(payload.get("prompt_version", PROMPT_VERSION)),
         )
         try:
             result = validate_analysis_result(await self.adapter.analyze(request))
@@ -303,6 +309,23 @@ class WorkerProcessor:
         job.completed_at_utc = utc_now()
         job.updated_at_utc = utc_now()
         await session.commit()
+
+    def _model_configuration_mismatch(self, job: models.AnalysisJob) -> str | None:
+        mismatches = []
+        if job.model_name != self.settings.rfgpt_model_name:
+            mismatches.append(
+                f"model_name job={job.model_name!r} worker={self.settings.rfgpt_model_name!r}"
+            )
+        if job.model_version != self.settings.rfgpt_model_version:
+            mismatches.append(
+                "model_version "
+                f"job={job.model_version!r} worker={self.settings.rfgpt_model_version!r}"
+            )
+        if not mismatches:
+            return None
+        return "Analysis job target does not match configured worker model contract: " + "; ".join(
+            mismatches
+        )
 
 
 def decode_message(data: bytes) -> dict[str, Any]:

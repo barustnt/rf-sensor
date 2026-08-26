@@ -35,6 +35,12 @@ conda run -n rf-intel python scripts/verify_backup_restore.py
 
 - Use `docs/rf-preprocessing.md` for the canonical `atheer-hann-v1` preprocessing pipeline.
 - Use `docs/rfgpt-runtime.md` to launch the local-only vLLM server in `vllm-env`.
+- Start the API and worker from the same code revision and with identical `RF_RFGPT_ADAPTER`,
+  `RF_RFGPT_MODEL_NAME`, `RF_RFGPT_MODEL_VERSION`, prompt/schema defaults, and `RF_DATABASE_URL`.
+  The database URL must include the PostgreSQL password in the runtime environment, but the
+  password must not be printed in logs or documentation.
+- The worker validates PostgreSQL readiness with `SELECT 1` before it connects to NATS or consumes
+  analysis jobs. Authentication or connectivity failures stop startup before subscription.
 - Keep model paths and weights outside Git and supply `RF_RFGPT_MODEL_PATH` only through an
   untracked local environment file.
 - The worker still runs with `RF_WORKER_CONCURRENCY=1`.
