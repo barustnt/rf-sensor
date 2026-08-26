@@ -11,7 +11,6 @@ from rf_platform.dashboard.tabs.logs import render_logs
 from rf_platform.dashboard.tabs.operations import render_metrics, run_retention_report
 from rf_platform.dashboard.tabs.outputs import render_output_detail, render_outputs
 from rf_platform.dashboard.tabs.overview import render_overview
-from rf_platform.dashboard.tabs.query import ask_rf
 from rf_platform.dashboard.tabs.sensors import render_sensors
 from rf_platform.dashboard.tabs.storage import render_storage, render_storage_history
 
@@ -50,9 +49,9 @@ def build_dashboard():  # type: ignore[no-untyped-def]
             offset=int(offset or 0),
         )
 
-    with gr.Blocks(title="RF Intelligence Platform") as demo:
+    with gr.Blocks(title="RF Command Center") as demo:
         gr.Markdown(
-            "# RF Intelligence Platform\nModel outputs are observations, not verified ground truth."
+            "# RF Command Center\nModel outputs are observations, not verified ground truth."
         )
         with gr.Tab("Overview"):
             overview = gr.Textbox(label="Overview", lines=10)
@@ -210,14 +209,6 @@ def build_dashboard():  # type: ignore[no-untyped-def]
                 lambda actor_value: run_retention_report(client, actor_value),
                 inputs=retention_actor,
                 outputs=retention,
-            )
-        with gr.Tab("Ask RF"):
-            question = gr.Textbox(label="Question", value="What happened today?")
-            timezone = gr.Textbox(label="Timezone", value=settings.timezone)
-            answer = gr.JSON(label="Evidence-backed answer")
-            ask_button: Any = gr.Button("Ask")
-            ask_button.click(
-                lambda q, tz: ask_rf(client, q, tz), inputs=[question, timezone], outputs=answer
             )
     return demo
 

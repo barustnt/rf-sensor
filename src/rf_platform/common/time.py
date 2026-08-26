@@ -108,7 +108,11 @@ def resolve_historical_interval(
         assumptions.append("No explicit day found; assumed today in the display timezone.")
 
     clock = _clock_from_text(question)
-    if clock:
+    if "morning" in text and clock is None:
+        start_local = datetime.combine(base_date, time(6, 0), tzinfo=local_tz)
+        end_local = datetime.combine(base_date, time(12, 0), tzinfo=local_tz)
+        assumptions.append("Interpreted morning as 6:00 AM to noon in the display timezone.")
+    elif clock:
         hour, minute = clock
         start_local = datetime.combine(base_date, time(hour, minute), tzinfo=local_tz)
         end_local = start_local + timedelta(hours=1)

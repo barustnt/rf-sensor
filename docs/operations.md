@@ -5,8 +5,18 @@
 3. Start infrastructure with `make infra-up`.
 4. Apply migrations with `make migrate`.
 5. Seed profiles with `make seed`.
-6. Run API, worker, simulated sensor, and dashboard with their Make targets, or run the full
-   simulated flow with `make demo`.
+6. Run API, worker, simulated sensor, Command Center, and Ask RF with their Make targets, or run
+   the full simulated flow with `make demo`.
+
+## Interfaces
+
+- Command Center: technical Gradio dashboard on port 7860 via `make dashboard`.
+- Ask RF: separate read-only presentation interface on port 7861 via `make ask-rf`.
+
+Ask RF uses the platform API server-side, displays plain-language answers only, and does not expose
+sensor tokens, database credentials, retry controls, alert controls, UUIDs, model/debug details,
+raw JSON, logs, or spectrograms. It does not call vLLM, RF-GPT, the B210, or any sensor while
+answering historical questions. See `docs/ask-rf.md`.
 
 ## Milestone 2 operator actions
 
@@ -59,3 +69,18 @@ conda run -n rf-intel python scripts/run_real_model_smoke.py
 - Keep the VLM runtime separate in `vllm-env`; do not run RF-GPT from `rf-b210`.
 - Use `docs/b210-sensor.md` for one-shot, continuous, and full-platform acceptance commands.
 - Raw IQ persistence is disabled by default with `RF_B210_PERSIST_RAW_IQ=false`.
+
+## Ask RF presentation behavior
+
+- Start the API with the same `RF_SENSOR_TOKEN` used by sensors and a password-bearing
+  `RF_DATABASE_URL`; never print the password.
+- Start Ask RF with `RF_PLATFORM_URL`, `RF_ASK_RF_HOST`, `RF_ASK_RF_PORT`,
+  `RF_DISPLAY_TIMEZONE`, and `RF_API_TIMEOUT_SECONDS`.
+- Ask RF excludes simulated, mock, parser-invalid, failed, dead-letter, model-mismatched, and
+  semantically inconsistent records. Historical excluded records remain visible in the Command
+  Center.
+- Internally inconsistent historical output is preserved in the platform but rejected from Ask RF
+  trusted findings and produces no presentation event or alert claim.
+- Bluetooth/BLE answers mention partial 2.4 GHz coverage when only a slice of the band was
+  monitored. LTE/5G questions state that configured bands were not monitored until later scan
+  profiles exist.

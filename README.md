@@ -1,8 +1,9 @@
 # RF Intelligence Platform
 
-Milestones 0-4 implement a simulated end-to-end RF intelligence slice, operational dashboard
-hardening, canonical Atheer/Hann preprocessing, a local vLLM RF-GPT adapter, and a receive-only
-USRP B210 sensor adapter. Real Pluto+ support remains out of scope.
+Milestones 0-5 implement a simulated end-to-end RF intelligence slice, operational dashboard
+hardening, canonical Atheer/Hann preprocessing, a local vLLM RF-GPT adapter, a receive-only
+USRP B210 sensor adapter, and a separate Ask RF presentation interface. Real Pluto+ support
+remains out of scope.
 
 ## Environment
 
@@ -30,6 +31,7 @@ make worker
 make sensor-sim
 make PYTHON='conda run -n rf-b210 python' b210-local-smoke  # requires B210 hardware
 make dashboard
+make ask-rf
 make demo
 conda run -n rf-intel python scripts/run_milestone2_acceptance.py
 conda run -n rf-intel python scripts/run_real_model_smoke.py  # requires a running local vLLM
@@ -53,11 +55,13 @@ adds an optional local vLLM adapter configured entirely through environment vari
 Retention is report-only and does not delete data. PostgreSQL and artifact backup/restore steps
 are documented in `docs/backup-restore.md`. Local RF-GPT/vLLM launch and smoke-test procedures are
 documented in `docs/rfgpt-runtime.md`.
-Receive-only B210 setup and acceptance are documented in `docs/b210-sensor.md`.
+Receive-only B210 setup and acceptance are documented in `docs/b210-sensor.md`. The audience split
+between the technical Command Center on port 7860 and Ask RF on port 7861 is documented in
+`docs/ask-rf.md`.
 
 ## Safety notes
 
 This MVP is receive-only and metadata-focused. It stores spectrogram artifacts and structured
 RF observations; it does not decode or retain communications payloads, identify people, or claim
 proof of cheating. RF-GPT-like output is displayed as a model observation, not verified ground
-truth.
+truth. Ask RF uses only already stored, trusted API data and does not call vLLM or RF-GPT.

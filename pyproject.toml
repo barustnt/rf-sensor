@@ -47,6 +47,7 @@ rf-api = "rf_platform.backend.main:cli"
 rf-sensor = "rf_platform.sensor_agent.main:cli"
 rf-worker = "rf_platform.worker.main:cli"
 rf-dashboard = "rf_platform.dashboard.main:cli"
+rf-ask-rf = "rf_platform.ask_rf.main:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from rf_platform.backend.api.v1 import (
     alerts,
     analyses,
+    ask_rf,
     captures,
     events,
     health,
@@ -102,6 +103,7 @@ def create_app() -> FastAPI:
         storage.router,
         operational.router,
         query.router,
+        ask_rf.router,
     ]:
         app.include_router(router)
     return app

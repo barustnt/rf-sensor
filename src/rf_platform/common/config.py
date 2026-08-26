@@ -30,10 +30,14 @@ class Settings(BaseSettings):
     timezone: str = "Asia/Dubai"
 
     platform_url: str = Field(default="http://localhost:8000")
+    display_timezone: str = "Asia/Dubai"
+    api_timeout_seconds: float = 5.0
     api_host: str = "localhost"
     api_port: int = 8000
     dashboard_host: str = "localhost"
     dashboard_port: int = 7860
+    ask_rf_host: str = "0.0.0.0"
+    ask_rf_port: int = 7861
     gradio_share: bool = False
     cors_origins: str = ""
 
@@ -97,7 +101,7 @@ class Settings(BaseSettings):
     worker_max_attempts: int = 5
     worker_concurrency: int = 1
 
-    @field_validator("timezone")
+    @field_validator("timezone", "display_timezone")
     @classmethod
     def validate_timezone(cls, value: str) -> str:
         try:
@@ -156,6 +160,13 @@ class Settings(BaseSettings):
     def validate_non_negative_seconds(cls, value: float) -> float:
         if value < 0:
             raise ValueError("duration settings must be non-negative")
+        return value
+
+    @field_validator("api_timeout_seconds")
+    @classmethod
+    def validate_positive_timeout(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("API timeout must be positive")
         return value
 
     @field_validator("b210_gain_db")
