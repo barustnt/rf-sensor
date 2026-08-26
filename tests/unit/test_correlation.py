@@ -138,6 +138,7 @@ async def test_correlation_rejects_parser_invalid_results() -> None:
 async def test_correlation_rejects_no_signal_or_semantically_inconsistent_results() -> None:
     for result in [
         _result(overall_assessment="no signal present"),
+        _result(overall_assessment="RF observation only; no signals."),
         _result(quality_flags=["no_signal"]),
         _result(quality_flags=["parser_failed", SEMANTIC_INCONSISTENCY]),
     ]:
@@ -146,6 +147,29 @@ async def test_correlation_rejects_no_signal_or_semantically_inconsistent_result
         assert event is None
         assert session.events == []
         assert session.alerts == []
+
+
+@pytest.mark.asyncio
+async def test_correlation_rejects_live_embedded_no_signal_contradiction() -> None:
+    result = _result(
+        analysis_id="a3c875f4-94ac-4247-990d-a04b983f3fdf",
+        technologies=[
+            TechnologyFinding(
+                label="chirp",
+                model_score=None,
+                observation="chirp transmission",
+                evidence=["capture_id:b1380292-ec86-46b9-ac62-1dcc219e19d8"],
+            )
+        ],
+        overall_assessment="RF observation only; no signals.",
+    )
+    session = _FakeCorrelationSession(result.analysis_id)
+
+    event = await correlate_result(cast(Any, session), cast(Any, _capture()), result)
+
+    assert event is None
+    assert session.events == []
+    assert session.alerts == []
 
 
 @pytest.mark.asyncio

@@ -7,11 +7,11 @@ from rf_platform.backend.db import models
 from rf_platform.common.ids import new_id
 from rf_platform.common.time import utc_now
 from rf_platform.contracts.analysis import AnalysisResult
-from rf_platform.worker.rfgpt.local import (
+from rf_platform.worker.rules import RULE_ID, RULE_VERSION, should_create_event
+from rf_platform.worker.semantic_markers import (
     result_has_no_signal_marker,
     result_is_semantically_inconsistent,
 )
-from rf_platform.worker.rules import RULE_ID, RULE_VERSION, should_create_event
 
 
 async def correlate_result(

@@ -25,6 +25,7 @@ from rf_platform.worker.rfgpt.local import (
     VLLMTimeoutError,
     _extract_json_object,
 )
+from rf_platform.worker.semantic_markers import has_no_signal_marker
 
 
 def _settings(**overrides: Any) -> Settings:
@@ -104,6 +105,37 @@ async def _analyze_content(tmp_path: Path, content: str, finish_reason: str | No
     )
     result = await LocalVLLMRFGPTAdapter(_settings()).analyze(_request(_png(tmp_path / "a.png")))
     return result, raw
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "RF observation only; no signals.",
+        "There are no signals observed.",
+        "No signal present.",
+        "no_signal",
+        "no-signal",
+        "no signal observed",
+        "no signals detected",
+        "no signal visible",
+    ],
+)
+def test_no_signal_marker_detects_clear_absence_phrases(text: str) -> None:
+    assert has_no_signal_marker(text, []) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "No signal loss was observed.",
+        "No signal degradation was observed.",
+        "No signal interruption was observed.",
+        "No classification available.",
+        "Signal present; no protocol identified.",
+    ],
+)
+def test_no_signal_marker_avoids_obvious_false_positives(text: str) -> None:
+    assert has_no_signal_marker(text, []) is False
 
 
 def test_vllm_default_generation_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -315,6 +347,46 @@ async def test_live_contradictory_payload_becomes_semantic_inconsistency(
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_live_embedded_no_signals_payload_becomes_semantic_inconsistency(
+    tmp_path: Path,
+) -> None:
+    content = json.dumps(
+        {
+            "technologies": [
+                {
+                    "label": "chirp",
+                    "model_score": None,
+                    "observation": "chirp transmission",
+                    "evidence": ["capture_id:b1380292-ec86-46b9-ac62-1dcc219e19d8"],
+                }
+            ],
+            "signals": [],
+            "overall_assessment": "RF observation only; no signals.",
+            "quality_flags": [],
+        }
+    )
+    raw = {
+        "choices": [{"finish_reason": "stop", "message": {"content": content}}],
+        "usage": {"completion_tokens": 35},
+    }
+    _mock_ready()
+    respx.post("http://vllm.local/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json=raw)
+    )
+
+    result = await LocalVLLMRFGPTAdapter(_settings()).analyze(_request(_png(tmp_path / "a.png")))
+
+    assert result.status == "parser_failed"
+    assert result.parser_valid is False
+    assert result.technologies == []
+    assert result.signals == []
+    assert result.quality_flags == ["parser_failed", SEMANTIC_INCONSISTENCY]
+    assert "Semantic inconsistency" in result.overall_assessment
+    assert json.loads(result.raw_response) == raw
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_empty_findings_and_allowed_rf_quality_flags_are_valid(tmp_path: Path) -> None:
     content = json.dumps(
         {
@@ -351,6 +423,26 @@ async def test_empty_findings_with_no_signal_quality_flag_succeeds(tmp_path: Pat
     assert result.technologies == []
     assert result.signals == []
     assert result.quality_flags == ["no_signal"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_empty_findings_with_no_signal_sentence_succeeds(tmp_path: Path) -> None:
+    content = json.dumps(
+        {
+            "technologies": [],
+            "signals": [],
+            "overall_assessment": "No signals present.",
+            "quality_flags": [],
+        }
+    )
+    result, _ = await _analyze_content(tmp_path, content)
+
+    assert result.status == "succeeded"
+    assert result.parser_valid is True
+    assert result.technologies == []
+    assert result.signals == []
+    assert result.overall_assessment == "No signals present."
 
 
 @pytest.mark.asyncio

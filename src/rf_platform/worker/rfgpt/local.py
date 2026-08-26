@@ -23,6 +23,10 @@ from rf_platform.contracts.analysis import (
     SignalFinding,
     TechnologyFinding,
 )
+from rf_platform.worker.semantic_markers import (
+    SEMANTIC_INCONSISTENCY,
+    has_no_signal_marker,
+)
 
 PROMPT_VERSION = "technology-detection-primary-v4"
 RESPONSE_SCHEMA_NAME = "rfgpt_analysis_primary_v4"
@@ -35,7 +39,6 @@ RF_QUALITY_FLAGS = (
     "limited_bandwidth",
 )
 NON_RF_FLAGS_REMOVED = "non_rf_flags_removed"
-SEMANTIC_INCONSISTENCY = "semantic_inconsistency"
 PARSER_FAILED = "parser_failed"
 MAX_TECHNOLOGIES = 1
 MAX_SIGNALS = 1
@@ -859,22 +862,6 @@ def _trusted_quality_flags(raw_flags: list[Any]) -> list[str]:
     return trusted[:MAX_QUALITY_FLAGS]
 
 
-def has_no_signal_marker(overall_assessment: str | None, quality_flags: list[str]) -> bool:
-    if _is_no_signal_marker(overall_assessment or ""):
-        return True
-    return any(_is_no_signal_marker(flag) for flag in quality_flags)
-
-
-def result_has_no_signal_marker(result: AnalysisResult) -> bool:
-    return has_no_signal_marker(result.overall_assessment, result.quality_flags)
-
-
-def result_is_semantically_inconsistent(result: AnalysisResult) -> bool:
-    return SEMANTIC_INCONSISTENCY in result.quality_flags or (
-        bool(result.technologies or result.signals) and result_has_no_signal_marker(result)
-    )
-
-
 def _validate_semantic_consistency(
     technologies: list[TechnologyFinding],
     signals: list[SignalFinding],
@@ -885,20 +872,6 @@ def _validate_semantic_consistency(
         raise SemanticInconsistencyError(
             "no-signal marker conflicts with non-empty technology or signal findings"
         )
-
-
-def _is_no_signal_marker(value: str) -> bool:
-    normalized = _normalize_marker(value)
-    return normalized in {
-        "no signal",
-        "no signals",
-        "no signal present",
-        "no signals present",
-    }
-
-
-def _normalize_marker(value: str) -> str:
-    return " ".join(value.lower().replace("_", " ").replace("-", " ").split())
 
 
 def _semantic_assertion_text(payload: dict[str, Any]) -> list[str]:

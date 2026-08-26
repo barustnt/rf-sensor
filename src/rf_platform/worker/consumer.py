@@ -14,7 +14,8 @@ from rf_platform.common.time import utc_now
 from rf_platform.contracts.analysis import AnalysisRequest
 from rf_platform.worker.correlation import correlate_result
 from rf_platform.worker.rfgpt.base import RFGPTAdapter
-from rf_platform.worker.rfgpt.local import SEMANTIC_INCONSISTENCY, RFGPTAdapterError
+from rf_platform.worker.rfgpt.local import RFGPTAdapterError
+from rf_platform.worker.semantic_markers import SEMANTIC_INCONSISTENCY
 from rf_platform.worker.validation import validate_analysis_result
 
 PROMPT_VERSION = "technology-detection-primary-v4"
