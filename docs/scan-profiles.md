@@ -109,13 +109,31 @@ Selected slice counts:
 | `uae_wifi5_5470_5725` | 15 |
 | `uae_wifi5_5725_5875` | 9 |
 
-Print the exact plan for the active configuration instead of relying on this table:
+Print the exact plan for the active configuration instead of relying on this table. The normal
+dry-run output is intentionally concise: selected profiles, planned slices, estimates, warnings, and
+notes. The full catalogue remains available through `GET /api/v1/scan-profiles` or the explicit
+`--scan-plan-verbose` CLI option.
 
 ```bash
 RF_SENSOR_ADAPTER=b210 \
 RF_SCAN_ENABLED_PROFILE_IDS=uae_shared_2400_2483_5 \
+RF_SCAN_MAX_SLICES_PER_CYCLE=2 \
 make PYTHON='conda run -n rf-intel python' scan-plan
 ```
+
+For that limited two-slice example, the first planned slices are 2400-2420 MHz and 2418-2438 MHz.
+They request 40 MHz of capture bandwidth, overlap by 2 MHz, and cover a 38 MHz union of the
+83.5 MHz configured profile. The planner warns that this truncated plan does not provide complete
+profile coverage.
+
+Key estimate fields include:
+
+- `requested_capture_bandwidth_hz` — sum of requested capture bandwidth for planned slices;
+- `overlap_hz` — requested capture bandwidth minus planned union coverage;
+- `planned_union_coverage_hz` — merged coverage from the actual limited plan;
+- `configured_profile_bandwidth_hz` — full configured width of selected profiles;
+- `full_profile_slice_count` and `planned_slice_count`;
+- `plan_truncated` and `full_profile_coverage_complete`.
 
 ## Scanner and backpressure
 

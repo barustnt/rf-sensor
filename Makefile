@@ -1,10 +1,19 @@
 PYTHON ?= python
 export PYTHONPATH := src$(if $(PYTHONPATH),:$(PYTHONPATH))
+
+# Preserve explicit RF_SCAN_* environment/command-line values when the default
+# .env.example is included by Make. This keeps documented dry-run invocations like
+# `RF_SCAN_ENABLED_PROFILE_IDS=... make scan-plan` from being overwritten by
+# example defaults.
+PRESERVED_RF_SCAN_VARS := RF_SCAN_PROFILE_CONFIG RF_SCAN_PROFILE_SET RF_SCAN_ENABLED_PROFILE_IDS RF_SCAN_MAX_INFLIGHT_JOBS RF_SCAN_BACKPRESSURE_POLL_SECONDS RF_SCAN_FAILURE_COOLDOWN_SECONDS RF_SCAN_RETUNE_SETTLE_SECONDS RF_SCAN_CYCLE_INTERVAL_SECONDS RF_SCAN_MAX_SLICES_PER_CYCLE
+$(foreach var,$(PRESERVED_RF_SCAN_VARS),$(eval _ENV_ORIGIN_$(var) := $(origin $(var)))$(eval _ENV_VALUE_$(var) := $($(var))))
+
 ENV_FILE ?= $(if $(wildcard .env),.env,.env.example)
 ifneq (,$(wildcard $(ENV_FILE)))
 include $(ENV_FILE)
 export
 endif
+$(foreach var,$(PRESERVED_RF_SCAN_VARS),$(if $(filter environment% command line,$(_ENV_ORIGIN_$(var))),$(eval override $(var) := $(_ENV_VALUE_$(var)))$(eval export $(var))))
 CONDA_ENV ?= rf-intel
 COMPOSE ?= docker compose -f deploy/docker-compose.infra.yml --project-name rf-sensor
 
@@ -44,7 +53,7 @@ sensor-b210: ## Run the continuous receive-only B210 sensor agent
 	RF_SENSOR_ADAPTER=b210 $(PYTHON) -m rf_platform.sensor_agent.main
 
 scan-plan: ## Print deterministic dry-run UAE B210 scan plan without hardware/API access
-	RF_SENSOR_ADAPTER=b210 $(PYTHON) -m rf_platform.sensor_agent.main --scan-plan
+	@RF_SENSOR_ADAPTER=b210 $(PYTHON) -m rf_platform.sensor_agent.main --scan-plan
 
 b210-scan: ## Run receive-only sequential B210 multi-band scanner
 	RF_SENSOR_ADAPTER=b210 $(PYTHON) -m rf_platform.sensor_agent.main --scan

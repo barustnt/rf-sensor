@@ -18,7 +18,7 @@ async def scan_profiles(settings: Settings = Depends(settings_dependency)) -> di
         plan = load_plan_from_settings(settings)
     except ScanProfileError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return plan.as_dict(retune_settle_seconds=settings.scan_retune_settle_seconds)
+    return plan.as_dict(retune_settle_seconds=settings.scan_retune_settle_seconds, verbose=True)
 
 
 @router.get("/coverage")

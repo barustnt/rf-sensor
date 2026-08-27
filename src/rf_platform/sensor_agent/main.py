@@ -76,12 +76,24 @@ def cli() -> None:
     parser.add_argument("--scan", action="store_true", help="Run sequential B210 scan cycles")
     parser.add_argument("--scan-one-cycle", action="store_true", help="Run one complete scan cycle")
     parser.add_argument("--scan-max-slices", type=int, default=None)
+    parser.add_argument(
+        "--scan-plan-verbose",
+        action="store_true",
+        help="Include the full scan catalogue in dry-run output",
+    )
     args = parser.parse_args()
     try:
         if args.scan_plan:
             configure_logging()
             print(
-                json.dumps(dry_run_plan(get_settings(), max_slices=args.scan_max_slices), indent=2)
+                json.dumps(
+                    dry_run_plan(
+                        get_settings(),
+                        max_slices=args.scan_max_slices,
+                        verbose=args.scan_plan_verbose,
+                    ),
+                    indent=2,
+                )
             )
         elif args.scan:
             asyncio.run(

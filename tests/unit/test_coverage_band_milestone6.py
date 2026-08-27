@@ -283,3 +283,14 @@ def test_check_findings_band_compatibility_returns_reject_result() -> None:
 
     assert result.incompatible is True
     assert result.severity == "reject"
+
+
+def test_coverage_required_ranges_use_full_profile_even_when_manual_scan_was_limited() -> None:
+    profile = _accepted_profile()
+    plan = build_scan_plan(_profile_set(profile), enabled_profile_ids=profile.profile_id)
+    required = [(item.coverage_start_hz, item.coverage_end_hz) for item in plan.slices]
+    first_two_manual_slices = required[:2]
+
+    assert coverage_width_hz(first_two_manual_slices) == 38_000_000
+    assert profile.width_hz == 83_500_000
+    assert missing_ranges(required, first_two_manual_slices) == [(2_438_000_000, 2_483_500_000)]

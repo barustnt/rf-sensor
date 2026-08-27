@@ -202,9 +202,11 @@ class B210ScanRunner:
                 continue
 
 
-def dry_run_plan(settings: Settings, *, max_slices: int | None = None) -> dict[str, Any]:
+def dry_run_plan(
+    settings: Settings, *, max_slices: int | None = None, verbose: bool = False
+) -> dict[str, Any]:
     try:
         plan = load_plan_from_settings(settings, max_slices=max_slices)
     except ScanProfileError:
         raise
-    return plan.as_dict(retune_settle_seconds=settings.scan_retune_settle_seconds)
+    return plan.as_dict(retune_settle_seconds=settings.scan_retune_settle_seconds, verbose=verbose)

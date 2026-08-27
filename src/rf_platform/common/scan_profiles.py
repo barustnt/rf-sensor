@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -241,10 +241,24 @@ class ScanPlan:
     enabled_profile_ids: tuple[str, ...]
     slices: tuple[ScanSlice, ...]
     warnings: tuple[str, ...] = ()
+    full_slice_counts: tuple[tuple[str, int], ...] = field(default_factory=tuple)
 
     @property
     def selected_profile_ids(self) -> set[str]:
+        return set(self.enabled_profile_ids)
+
+    @property
+    def planned_profile_ids(self) -> set[str]:
         return {item.profile_id for item in self.slices}
+
+    def selected_profiles(self) -> list[ScanProfile]:
+        selected_ids = set(self.enabled_profile_ids)
+        return [
+            profile for profile in self.profile_set.profiles if profile.profile_id in selected_ids
+        ]
+
+    def full_slice_count_by_profile(self) -> dict[str, int]:
+        return dict(self.full_slice_counts)
 
     def slice_counts(self) -> dict[str, int]:
         counts: dict[str, int] = {}
@@ -253,34 +267,56 @@ class ScanPlan:
         return counts
 
     def estimates(self, *, retune_settle_seconds: float = 0.0) -> dict[str, Any]:
-        selected = [
-            profile
-            for profile in self.profile_set.profiles
-            if profile.profile_id in self.selected_profile_ids
-        ]
-        nominal = sum(profile.width_hz for profile in selected)
+        selected = self.selected_profiles()
+        configured_bandwidth = sum(profile.width_hz for profile in selected)
         requested = sum(item.capture_bandwidth_hz for item in self.slices)
+        planned_union = _planned_union_coverage_hz(self.slices)
         duration = sum(
             item.capture_duration_seconds + retune_settle_seconds for item in self.slices
         )
+        full_slice_count = sum(
+            self.full_slice_count_by_profile().get(profile.profile_id, 0) for profile in selected
+        )
+        planned_slice_count = len(self.slices)
+        plan_truncated = planned_slice_count < full_slice_count
+        full_profile_coverage_complete = (
+            bool(selected) and not plan_truncated and planned_union >= configured_bandwidth
+        )
         return {
             "profile_count": len(selected),
-            "slice_count": len(self.slices),
-            "nominal_covered_bandwidth_hz": nominal,
+            "slice_count": planned_slice_count,
+            "full_profile_slice_count": full_slice_count,
+            "planned_slice_count": planned_slice_count,
+            "plan_truncated": plan_truncated,
+            "nominal_covered_bandwidth_hz": planned_union,
+            "planned_union_coverage_hz": planned_union,
+            "configured_profile_bandwidth_hz": configured_bandwidth,
             "requested_capture_bandwidth_hz": requested,
-            "overlap_hz": max(0, requested - nominal),
-            "expected_capture_count_per_cycle": len(self.slices),
+            "overlap_hz": max(0, requested - planned_union),
+            "full_profile_coverage_complete": full_profile_coverage_complete,
+            "expected_capture_count_per_cycle": planned_slice_count,
             "minimum_capture_only_cycle_duration_seconds": round(duration, 3),
             "inference_time_included": False,
         }
 
-    def as_dict(self, *, retune_settle_seconds: float = 0.0) -> dict[str, Any]:
-        return {
+    def as_dict(
+        self, *, retune_settle_seconds: float = 0.0, verbose: bool = False
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "schema_version": "1.0",
-            "profile_set": self.profile_set.as_dict(
-                selected_ids=self.selected_profile_ids,
-                slice_counts=self.slice_counts(),
-            ),
+            "profile_set": {
+                "schema_version": self.profile_set.schema_version,
+                "profile_set_id": self.profile_set.profile_set_id,
+                "version": self.profile_set.version,
+                "display_name": self.profile_set.display_name,
+            },
+            "selected_profiles": [
+                profile.as_dict(
+                    selected=True,
+                    slice_count=self.slice_counts().get(profile.profile_id, 0),
+                )
+                for profile in self.selected_profiles()
+            ],
             "enabled_profile_ids": list(self.enabled_profile_ids),
             "slices": [item.as_dict() for item in self.slices],
             "estimates": self.estimates(retune_settle_seconds=retune_settle_seconds),
@@ -293,11 +329,46 @@ class ScanPlan:
                 "Capture-only cycle duration excludes RF-GPT inference time.",
             ],
         }
+        if verbose:
+            payload["profile_set"] = self.profile_set.as_dict(
+                selected_ids=self.selected_profile_ids,
+                slice_counts=self.slice_counts(),
+            )
+        return payload
 
-    def to_json(self, *, retune_settle_seconds: float = 0.0) -> str:
+    def to_json(self, *, retune_settle_seconds: float = 0.0, verbose: bool = False) -> str:
         return json.dumps(
-            self.as_dict(retune_settle_seconds=retune_settle_seconds), indent=2, sort_keys=True
+            self.as_dict(retune_settle_seconds=retune_settle_seconds, verbose=verbose),
+            indent=2,
+            sort_keys=True,
         )
+
+
+def _planned_union_coverage_hz(slices: tuple[ScanSlice, ...]) -> int:
+    ranges_by_profile: dict[str, list[tuple[int, int]]] = {}
+    for item in slices:
+        ranges_by_profile.setdefault(item.profile_id, []).append(
+            (item.coverage_start_hz, item.coverage_end_hz)
+        )
+    return sum(_range_width_hz(ranges) for ranges in ranges_by_profile.values())
+
+
+def _merge_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    cleaned = sorted((int(start), int(end)) for start, end in ranges if end > start)
+    if not cleaned:
+        return []
+    merged = [cleaned[0]]
+    for start, end in cleaned[1:]:
+        prev_start, prev_end = merged[-1]
+        if start <= prev_end:
+            merged[-1] = (prev_start, max(prev_end, end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _range_width_hz(ranges: list[tuple[int, int]]) -> int:
+    return sum(end - start for start, end in _merge_ranges(ranges))
 
 
 def parse_enabled_profile_ids(value: str | list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
@@ -479,15 +550,25 @@ def build_scan_plan(
         warnings.append(
             "No RF_SCAN_ENABLED_PROFILE_IDS were provided; no captures will be planned."
         )
+    full_slice_counts: dict[str, int] = {}
     for profile in selected_profiles:
-        slices.extend(_expand_profile(profile))
+        expanded = _expand_profile(profile)
+        full_slice_counts[profile.profile_id] = len(expanded)
+        slices.extend(expanded)
+    full_slice_count = len(slices)
     if max_slices is not None and max_slices > 0:
         slices = slices[:max_slices]
+    if len(slices) < full_slice_count:
+        warnings.append(
+            f"Planned {len(slices)} of {full_slice_count} slices; this plan does not provide "
+            "complete profile coverage."
+        )
     return ScanPlan(
         profile_set=profile_set,
         enabled_profile_ids=enabled_ids,
         slices=tuple(slices),
         warnings=tuple(warnings),
+        full_slice_counts=tuple(full_slice_counts.items()),
     )
 
 

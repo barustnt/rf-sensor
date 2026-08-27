@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, cast
 
@@ -175,7 +179,60 @@ def test_bandwidth_sample_rate_overlap_and_presentation_validation(tmp_path: Pat
     assert accepted.profiles[0].presentation_eligible is True
 
 
-def test_dry_run_plan_never_requires_hardware_api_or_vllm(tmp_path: Path) -> None:
+def test_limited_dry_run_estimates_truncated_profile_coverage() -> None:
+    settings = Settings(
+        sensor_adapter="b210",
+        scan_profile_config=CATALOGUE,
+        scan_enabled_profile_ids="uae_shared_2400_2483_5",
+        scan_max_slices_per_cycle=2,
+        scan_retune_settle_seconds=0.25,
+    )
+
+    plan = dry_run_plan(settings)
+    estimates = plan["estimates"]
+
+    assert plan["selected_profiles"][0]["profile_id"] == "uae_shared_2400_2483_5"
+    assert len(plan["slices"]) == 2
+    assert [item["requested_start_hz"] for item in plan["slices"]] == [
+        2_400_000_000,
+        2_418_000_000,
+    ]
+    assert [item["requested_end_hz"] for item in plan["slices"]] == [
+        2_420_000_000,
+        2_438_000_000,
+    ]
+    assert estimates["requested_capture_bandwidth_hz"] == 40_000_000
+    assert estimates["overlap_hz"] == 2_000_000
+    assert estimates["planned_union_coverage_hz"] == 38_000_000
+    assert estimates["nominal_covered_bandwidth_hz"] == 38_000_000
+    assert estimates["configured_profile_bandwidth_hz"] == 83_500_000
+    assert estimates["full_profile_slice_count"] == 5
+    assert estimates["planned_slice_count"] == 2
+    assert estimates["plan_truncated"] is True
+    assert estimates["full_profile_coverage_complete"] is False
+    assert plan["warnings"] == [
+        "Planned 2 of 5 slices; this plan does not provide complete profile coverage."
+    ]
+    assert "profiles" not in plan["profile_set"]
+    assert "vLLM" in " ".join(plan["notes"])
+
+
+def test_complete_full_profile_plan_estimates_full_coverage() -> None:
+    profile_set = load_scan_profile_set(CATALOGUE)
+    plan = build_scan_plan(profile_set, enabled_profile_ids="uae_shared_2400_2483_5")
+    estimates = plan.estimates()
+
+    assert len(plan.slices) == 5
+    assert estimates["requested_capture_bandwidth_hz"] == 100_000_000
+    assert estimates["planned_union_coverage_hz"] == 83_500_000
+    assert estimates["configured_profile_bandwidth_hz"] == 83_500_000
+    assert estimates["overlap_hz"] == 16_500_000
+    assert estimates["plan_truncated"] is False
+    assert estimates["full_profile_coverage_complete"] is True
+    assert plan.warnings == ()
+
+
+def test_dry_run_plan_never_requires_hardware_api_or_vllm() -> None:
     settings = Settings(
         sensor_adapter="b210",
         scan_profile_config=CATALOGUE,
@@ -210,3 +267,37 @@ async def test_read_only_scan_profiles_endpoint_contract() -> None:
     assert response["profile_set"]["profile_set_id"] == "uae-b210-sub6-v1"
     assert response["estimates"]["slice_count"] == 5
     assert response["notes"][0].startswith("Dry-run")
+
+
+def test_makefile_scan_plan_preserves_rf_scan_environment() -> None:
+    env = os.environ.copy()
+    env.update(
+        {
+            "RF_SENSOR_ADAPTER": "b210",
+            "RF_SCAN_ENABLED_PROFILE_IDS": "uae_shared_2400_2483_5",
+            "RF_SCAN_MAX_SLICES_PER_CYCLE": "2",
+        }
+    )
+
+    result = subprocess.run(
+        ["make", f"PYTHON={sys.executable}", "scan-plan"],
+        cwd=Path.cwd(),
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
+    decoder = json.JSONDecoder()
+    payload, _end = decoder.raw_decode(result.stdout[result.stdout.index("{") :])
+
+    assert payload["enabled_profile_ids"] == ["uae_shared_2400_2483_5"]
+    assert [item["profile_id"] for item in payload["selected_profiles"]] == [
+        "uae_shared_2400_2483_5"
+    ]
+    assert len(payload["slices"]) == 2
+    assert payload["estimates"]["planned_union_coverage_hz"] == 38_000_000
+    assert payload["estimates"]["configured_profile_bandwidth_hz"] == 83_500_000
+    assert payload["warnings"] == [
+        "Planned 2 of 5 slices; this plan does not provide complete profile coverage."
+    ]
