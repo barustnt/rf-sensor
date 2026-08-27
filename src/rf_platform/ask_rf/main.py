@@ -141,6 +141,14 @@ html, body { overflow-x: hidden; }
   width: 100% !important;
   max-width: 100% !important;
 }
+.askrf-actions .askrf-primary {
+  flex: 1 1 22rem !important;
+  min-width: min(100%, 18rem) !important;
+}
+.askrf-actions .askrf-secondary {
+  flex: 0 1 13rem !important;
+  min-width: min(100%, 12rem) !important;
+}
 .askrf-primary button,
 .askrf-primary {
   background: #0284c7 !important;
@@ -149,6 +157,10 @@ html, body { overflow-x: hidden; }
   border-radius: 999px !important;
   box-shadow: 0 8px 18px rgba(2, 132, 199, 0.2) !important;
   font-weight: 760 !important;
+}
+.askrf-primary button {
+  width: 100% !important;
+  min-height: 3.1rem !important;
 }
 .askrf-secondary button,
 .askrf-secondary,
@@ -189,6 +201,11 @@ textarea, input {
 .askrf-answer-region {
   width: 100% !important;
   max-width: 100% !important;
+}
+footer,
+.footer,
+[data-testid="footer"] {
+  display: none !important;
 }
 @media (max-width: 760px) {
   .gradio-container { padding: .75rem !important; }
@@ -269,7 +286,7 @@ def unavailable_response(
     return render_answer(response, question)
 
 
-def answer_region_update(visible: bool) -> dict[str, Any]:
+def visibility_update(visible: bool) -> dict[str, Any]:
     return {"__type__": "update", "visible": visible}
 
 
@@ -277,7 +294,7 @@ def submit_question(
     client: AskRFApiClient,
     question: str,
     context: dict[str, Any] | None,
-) -> tuple[dict[str, Any], str, str, str, dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], str, str, str, dict[str, Any]]:
     if not question.strip():
         question = "What technologies are nearby?"
     try:
@@ -287,13 +304,29 @@ def submit_question(
         question_html, answer_html, details, response_context = unavailable_response(
             question, client.display_timezone
         )
-        return answer_region_update(True), question_html, answer_html, details, response_context
+        return (
+            visibility_update(True),
+            visibility_update(True),
+            question_html,
+            answer_html,
+            details,
+            response_context,
+        )
     question_html, answer_html, details, response_context = render_answer(response, question)
-    return answer_region_update(True), question_html, answer_html, details, response_context
+    return (
+        visibility_update(True),
+        visibility_update(True),
+        question_html,
+        answer_html,
+        details,
+        response_context,
+    )
 
 
-def reset_conversation() -> tuple[dict[str, Any], str, str, str, dict[str, Any], str]:
-    return answer_region_update(False), "", "", "", {}, ""
+def reset_conversation() -> tuple[
+    dict[str, Any], dict[str, Any], str, str, str, dict[str, Any], str
+]:
+    return visibility_update(False), visibility_update(False), "", "", "", {}, ""
 
 
 def escape_visible(value: object) -> str:
@@ -326,7 +359,7 @@ def build_app():  # type: ignore[no-untyped-def]
         )
         with gr.Row(elem_classes=["askrf-actions"]):
             ask_button = gr.Button("Ask RF", variant="primary", elem_classes=["askrf-primary"])
-            new_button = gr.Button("New question", elem_classes=["askrf-secondary"])
+            new_button = gr.Button("New question", visible=False, elem_classes=["askrf-secondary"])
         with gr.Row(elem_classes=["askrf-examples"]):
             example_buttons = [
                 gr.Button(example, elem_classes=["askrf-example"]) for example in EXAMPLES
@@ -342,12 +375,26 @@ def build_app():  # type: ignore[no-untyped-def]
         ask_button.click(
             lambda q, ctx: submit_question(client, q, ctx),
             inputs=[question, context_state],
-            outputs=[answer_region, visible_question, answer_card, details, context_state],
+            outputs=[
+                answer_region,
+                new_button,
+                visible_question,
+                answer_card,
+                details,
+                context_state,
+            ],
         )
         question.submit(
             lambda q, ctx: submit_question(client, q, ctx),
             inputs=[question, context_state],
-            outputs=[answer_region, visible_question, answer_card, details, context_state],
+            outputs=[
+                answer_region,
+                new_button,
+                visible_question,
+                answer_card,
+                details,
+                context_state,
+            ],
         )
         for button, example in zip(example_buttons, EXAMPLES, strict=True):
             button.click(lambda text=example: text, outputs=question)
@@ -355,6 +402,7 @@ def build_app():  # type: ignore[no-untyped-def]
             reset_conversation,
             outputs=[
                 answer_region,
+                new_button,
                 visible_question,
                 answer_card,
                 details,
@@ -379,6 +427,7 @@ def cli() -> None:
         share=settings.gradio_share,
         theme=gr.themes.Soft(primary_hue="sky"),
         css=ASK_RF_CSS,
+        footer_links=[],
     )
 
 

@@ -344,7 +344,15 @@ def test_follow_up_reuses_prior_interval_and_new_question_resets_context() -> No
 
     assert interval.start_utc.isoformat() == "2026-08-25T06:00:00+00:00"
     assert "Reused" in interval.assumptions[0]
-    assert reset_conversation() == ({"__type__": "update", "visible": False}, "", "", "", {}, "")
+    assert reset_conversation() == (
+        {"__type__": "update", "visible": False},
+        {"__type__": "update", "visible": False},
+        "",
+        "",
+        "",
+        {},
+        "",
+    )
 
 
 def test_automatic_asia_dubai_timezone_setting() -> None:
@@ -506,7 +514,7 @@ def test_api_unavailable_behavior_is_friendly() -> None:
         def query(self, _question: str, _context: dict[str, Any] | None = None) -> AskRFResponse:
             raise httpx.ConnectError("hidden technical detail")
 
-    _region, _q, answer, details, context = submit_question(
+    _region, _new_question, _q, answer, details, context = submit_question(
         cast(AskRFApiClient, FailingClient()), "What happened today?", {}
     )
 
@@ -540,6 +548,9 @@ def test_ask_rf_component_source_hides_textbox_label_and_styles_light_controls()
     assert "background: #ffffff !important" in ASK_RF_CSS
     assert "border: 1px solid #bfdbfe" in ASK_RF_CSS
     assert "color: #0f172a !important" in ASK_RF_CSS
+    assert ".askrf-actions .askrf-primary" in ASK_RF_CSS
+    assert "flex: 1 1 22rem !important" in ASK_RF_CSS
+    assert "width: 100% !important" in ASK_RF_CSS
     assert ".askrf-question-field label" not in ASK_RF_CSS
     assert ".askrf-question-field .label-wrap" not in ASK_RF_CSS
 
@@ -555,19 +566,30 @@ def test_ask_rf_textbox_visible_focusable_and_not_hidden_by_css() -> None:
     assert "interactive=True" in textbox_source
     assert 'elem_classes=["askrf-question-field"]' in textbox_source
     assert "visible=False" not in textbox_source
-    assert "display: none" not in ASK_RF_CSS
+    textbox_css_start = ASK_RF_CSS.index(".askrf-question-field,")
+    textbox_css_end = ASK_RF_CSS.index(".askrf-actions,", textbox_css_start)
+    textbox_css = ASK_RF_CSS[textbox_css_start:textbox_css_end]
+    assert "display: none" not in textbox_css
     assert ".askrf-question-field textarea" in ASK_RF_CSS
     assert "min-height: 6.5rem !important" in ASK_RF_CSS
     assert "font-size: 1.2rem !important" in ASK_RF_CSS
     assert "textarea:focus" in ASK_RF_CSS
 
 
-def test_answer_region_hidden_initially_and_visible_after_answer() -> None:
+def test_initial_answer_region_and_new_question_are_hidden() -> None:
     source = Path("src/rf_platform/ask_rf/main.py").read_text(encoding="utf-8")
 
     assert 'gr.Group(visible=False, elem_classes=["askrf-answer-region"])' in source
+    assert 'gr.Button("New question", visible=False' in source
     assert "How was this determined?" in source
-    assert reset_conversation()[0] == {"__type__": "update", "visible": False}
+    reset = reset_conversation()
+    assert reset[0] == {"__type__": "update", "visible": False}
+    assert reset[1] == {"__type__": "update", "visible": False}
+
+
+def test_answer_region_and_new_question_become_visible_after_answer() -> None:
+    source = Path("src/rf_platform/ask_rf/main.py").read_text(encoding="utf-8")
+    assert "How was this determined?" in source
 
     class SuccessfulClient:
         display_timezone = "Asia/Dubai"
@@ -589,14 +611,33 @@ def test_answer_region_hidden_initially_and_visible_after_answer() -> None:
                 follow_up_context={},
             )
 
-    region, question_html, answer_html, details, _context = submit_question(
+    region, new_question, question_html, answer_html, details, _context = submit_question(
         cast(AskRFApiClient, SuccessfulClient()), "What happened today?", {}
     )
 
     assert region == {"__type__": "update", "visible": True}
+    assert new_question == {"__type__": "update", "visible": True}
     assert "You asked:" in question_html
     assert "No signal or wireless technology was confirmed" in answer_html
     assert details == "Used accepted observations only."
+
+
+def test_reset_hides_new_question_action_again() -> None:
+    reset = reset_conversation()
+
+    assert reset[0] == {"__type__": "update", "visible": False}
+    assert reset[1] == {"__type__": "update", "visible": False}
+    assert reset[-1] == ""
+
+
+def test_ask_rf_hides_gradio_technical_footer() -> None:
+    source = Path("src/rf_platform/ask_rf/main.py").read_text(encoding="utf-8")
+
+    assert "footer_links=[]" in source
+    assert "footer," in ASK_RF_CSS
+    assert '[data-testid="footer"]' in ASK_RF_CSS
+    footer_css_start = ASK_RF_CSS.index("footer,")
+    assert "display: none !important" in ASK_RF_CSS[footer_css_start:]
 
 
 def test_ask_rf_css_wraps_responsively_without_fixed_overflow() -> None:
