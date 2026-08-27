@@ -25,6 +25,7 @@ async def ask_rf_query(
             session,
             payload,
             default_timezone=settings.display_timezone,
+            settings=settings,
         )
     except Exception as exc:  # pragma: no cover - dependency failures vary by deployment
         logger.warning(

@@ -74,7 +74,7 @@ Response fields:
 
 - `schema_version`
 - `answer_status`: `observation`, `no_signal`, `no_data`, `partial_data`, `not_monitored`,
-  `unsupported_question`, or `unavailable`
+  `profile_not_validated`, `unsupported_question`, or `unavailable`
 - `display_answer`
 - `interpreted_interval`
 - `time_label`
@@ -110,8 +110,10 @@ unless accepted observations exist for the monitored range.
 - Bluetooth/BLE questions map to the 2.4 GHz range. Current 20 MHz captures cover only part of the
   full Bluetooth/BLE band, so Ask RF says Bluetooth was not confirmed in the monitored portion and
   never claims Bluetooth was absent from the complete band.
-- LTE and 5G NR questions do not invent local carrier frequencies. Until later multi-band scan
-  profiles are configured, Ask RF states that configured LTE/5G bands were not monitored.
+- LTE and 5G NR questions do not invent local carrier frequencies. With no eligible captures, Ask RF
+  says configured LTE/5G bands were not monitored. Experimental scan-profile captures can show that
+  a frequency range was monitored, but Ask RF returns `profile_not_validated` and does not claim
+  technology presence or absence until the profile is operator-accepted or independently validated.
 - General “nearby technologies” questions report only accepted, internally consistent observations
   in actually monitored ranges and include a short coverage limitation.
 
@@ -131,9 +133,22 @@ Follow-ups such as “Was it Bluetooth?” and “What about 5G?” reuse the pr
 period in the current UI session. The New question action clears that session context. Conversation
 history is not stored in PostgreSQL in this milestone.
 
+## Milestone 6 scan-profile behavior
+
+Ask RF uses the same trusted-data and band-consistency services as the worker and event correlation.
+It excludes simulated captures, mock/model-invalid runs, parser-invalid analyses, semantic
+contradictions, band-incompatible findings, and experimental profile technology claims from
+presentation conclusions. Operator-accepted or independently validated profiles may contribute to
+observation/no-signal logic, subject to coverage completeness and consistency checks.
+
+For “What technologies are nearby?”, Ask RF lists only presentation-eligible accepted observations.
+It may state in plain language that additional ranges were monitored experimentally, but it does not
+show profile IDs, validation flags, model details, raw JSON, or UUIDs.
+
 ## Limitations
 
 Ask RF is deterministic and does not call an external LLM, RF-GPT, vLLM, the B210, or any sensor.
-It does not validate RF semantic accuracy; labels remain unverified model observations. Multi-band
-scanning, LTE/NR profile coverage, and richer natural-language parsing are reserved for later
-milestones.
+It does not validate RF semantic accuracy; labels remain unverified model observations. The original
+fine-tuning dataset and formal evaluation records are unavailable, so the current RF-GPT checkpoint
+is used only as the operator-approved baseline without an accuracy claim. Richer natural-language
+parsing and automated broad scan scheduling remain outside this milestone.

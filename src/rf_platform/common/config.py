@@ -79,6 +79,16 @@ class Settings(BaseSettings):
     b210_persist_raw_iq: bool = False
     b210_max_recv_samples_per_chunk: int = 65_536
 
+    scan_profile_config: Path = Path("config/scan-profiles/uae-b210-sub6-v1.toml")
+    scan_profile_set: str = "uae-b210-sub6-v1"
+    scan_enabled_profile_ids: str = ""
+    scan_max_inflight_jobs: int = 1
+    scan_backpressure_poll_seconds: float = 5.0
+    scan_failure_cooldown_seconds: float = 30.0
+    scan_retune_settle_seconds: float = 0.1
+    scan_cycle_interval_seconds: float = 0.0
+    scan_max_slices_per_cycle: int | None = None
+
     retention_report_only: bool = True
     retention_heartbeat_days: int = 30
     retention_capture_days: int = 180
@@ -155,6 +165,10 @@ class Settings(BaseSettings):
         "sensor_retry_max_seconds",
         "b210_receive_timeout_seconds",
         "b210_settling_seconds",
+        "scan_backpressure_poll_seconds",
+        "scan_failure_cooldown_seconds",
+        "scan_retune_settle_seconds",
+        "scan_cycle_interval_seconds",
     )
     @classmethod
     def validate_non_negative_seconds(cls, value: float) -> float:
@@ -183,6 +197,13 @@ class Settings(BaseSettings):
             raise ValueError("B210 RX channel must be non-negative")
         return value
 
+    @field_validator("scan_max_inflight_jobs")
+    @classmethod
+    def validate_scan_max_inflight_jobs(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("scan max in-flight jobs must be at least 1")
+        return value
+
     @field_validator(
         "b210_center_frequency_hz",
         "b210_sample_rate_sps",
@@ -194,6 +215,13 @@ class Settings(BaseSettings):
     def validate_optional_positive_int(cls, value: int | None) -> int | None:
         if value is not None and value < 1:
             raise ValueError("B210 integer settings must be positive")
+        return value
+
+    @field_validator("scan_max_slices_per_cycle")
+    @classmethod
+    def validate_optional_positive_scan_limit(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("scan slice limit must be positive when set")
         return value
 
     @field_validator("rfgpt_max_output_tokens")

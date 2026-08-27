@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rf_platform.backend.db import models
 from rf_platform.backend.services.artifacts import FilesystemArtifactStore
+from rf_platform.common.band_compatibility import BAND_INCOMPATIBLE
 from rf_platform.common.broker import ANALYSIS_COMPLETED, DEADLETTER, EVENT_CREATED, NatsEventBus
 from rf_platform.common.config import Settings
 from rf_platform.common.time import utc_now
@@ -114,7 +115,7 @@ class WorkerProcessor:
             prompt_version=str(payload.get("prompt_version", PROMPT_VERSION)),
         )
         try:
-            result = validate_analysis_result(await self.adapter.analyze(request))
+            result = validate_analysis_result(await self.adapter.analyze(request), capture)
         except RFGPTAdapterError as exc:
             await self._record_adapter_failure(
                 sessionmaker=self.sessionmaker, job_id=job_id, exc=exc
@@ -210,24 +211,36 @@ class WorkerProcessor:
                 outcome = "succeeded"
             else:
                 semantic_inconsistency = SEMANTIC_INCONSISTENCY in result.quality_flags
-                job.status = "deadletter" if semantic_inconsistency else "failed"
+                band_incompatible = BAND_INCOMPATIBLE in result.quality_flags
+                deterministic_rejection = semantic_inconsistency or band_incompatible
+                job.status = "deadletter" if deterministic_rejection else "failed"
                 job.error_category = (
-                    SEMANTIC_INCONSISTENCY if semantic_inconsistency else "parser_failure"
+                    SEMANTIC_INCONSISTENCY
+                    if semantic_inconsistency
+                    else BAND_INCOMPATIBLE
+                    if band_incompatible
+                    else "parser_failure"
                 )
                 job.error_message = (
                     "RF-GPT output was internally inconsistent; raw response preserved"
                     if semantic_inconsistency
+                    else "RF-GPT output was incompatible with the captured frequency band"
+                    if band_incompatible
                     else "RF-GPT output failed constrained JSON parsing"
                 )
                 event_type = (
                     "analysis_semantic_inconsistency"
                     if semantic_inconsistency
+                    else "analysis_band_incompatible"
+                    if band_incompatible
                     else "analysis_parser_failed"
                 )
                 severity = "error"
                 message = (
                     f"Analysis job {job.job_id} produced semantically inconsistent output"
                     if semantic_inconsistency
+                    else f"Analysis job {job.job_id} produced band-incompatible output"
+                    if band_incompatible
                     else f"Analysis job {job.job_id} produced parser-invalid output"
                 )
                 outcome = "failed"

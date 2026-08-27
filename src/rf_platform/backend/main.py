@@ -19,6 +19,7 @@ from rf_platform.backend.api.v1 import (
     logs,
     operational,
     query,
+    scan,
     sensors,
     storage,
 )
@@ -102,6 +103,7 @@ def create_app() -> FastAPI:
         logs.router,
         storage.router,
         operational.router,
+        scan.router,
         query.router,
         ask_rf.router,
     ]:

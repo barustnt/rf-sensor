@@ -436,6 +436,7 @@ def test_rendered_answer_hides_json_and_technical_identifiers() -> None:
         "no_data",
         "partial_data",
         "not_monitored",
+        "profile_not_validated",
         "unsupported_question",
         "unavailable",
     ],
@@ -672,3 +673,57 @@ def test_ask_rf_source_contains_no_operational_controls_or_vllm_invocation() -> 
         assert term not in haystack
     assert "@media" in ASK_RF_CSS
     assert "#ffffff" in ASK_RF_CSS
+
+
+def test_profile_not_validated_answer_for_experimental_5g_coverage() -> None:
+    dataset = AskRFDataset(
+        real_capture_count=1,
+        rejected_result_count=0,
+        accepted_records=[],
+        locations=[{"site": "campus", "room": "lab"}],
+        coverage_ranges_hz=[(3_400_000_000, 3_420_000_000)],
+        unvalidated_capture_count=1,
+        technology_coverage_counts={"5g": 1, "lte": 1, "bluetooth": 0, "wifi": 0},
+        technology_unvalidated_counts={"5g": 1, "lte": 1, "bluetooth": 0, "wifi": 0},
+        technology_presentation_counts={"5g": 0, "lte": 0, "bluetooth": 0, "wifi": 0},
+    )
+
+    response = build_answer(QuestionIntent("technology", "5g"), _interval(), dataset)
+
+    assert response.answer_status == "profile_not_validated"
+    assert "monitored part of this frequency range" in response.display_answer
+    assert "No reliable 5G conclusion" in response.display_answer
+    assert "profile" not in response.follow_up_context
+
+
+def test_operator_accepted_5g_no_signal_uses_5g_language() -> None:
+    dataset = AskRFDataset(
+        real_capture_count=1,
+        rejected_result_count=0,
+        accepted_records=[
+            _record(overall="No signals present.", coverage=(3_400_000_000, 3_420_000_000))
+        ],
+        locations=[{"site": "campus", "room": "lab"}],
+        coverage_ranges_hz=[(3_400_000_000, 3_420_000_000)],
+        presentation_eligible_capture_count=1,
+        technology_coverage_counts={"5g": 1, "lte": 1, "bluetooth": 0, "wifi": 0},
+        technology_unvalidated_counts={"5g": 0, "lte": 0, "bluetooth": 0, "wifi": 0},
+        technology_presentation_counts={"5g": 1, "lte": 1, "bluetooth": 0, "wifi": 0},
+    )
+
+    response = build_answer(QuestionIntent("technology", "5g"), _interval(), dataset)
+
+    assert response.answer_status == "no_signal"
+    assert "configured 5G candidate ranges" in response.display_answer
+    assert "2.4 GHz" not in response.display_answer
+
+
+def test_5g_without_scan_coverage_remains_not_monitored() -> None:
+    response = build_answer(
+        QuestionIntent("technology", "5g"),
+        _interval(),
+        _dataset(real_capture_count=0, coverage=[]),
+    )
+
+    assert response.answer_status == "not_monitored"
+    assert "did not monitor" in response.display_answer

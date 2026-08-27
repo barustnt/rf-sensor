@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -10,6 +10,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from rf_platform.backend.db import models
+from rf_platform.backend.services.coverage import (
+    accepted_run_for_presentation,
+    capture_frequency_range,
+)
+from rf_platform.common.band_compatibility import (
+    profile_matches_technology,
+    profile_presentation_eligible,
+    scan_profile_for_capture,
+)
+from rf_platform.common.config import Settings
+from rf_platform.common.scan_profiles import ScanProfileSet, load_scan_profile_set
 from rf_platform.common.time import (
     DEFAULT_DISPLAY_TIMEZONE,
     InterpretedInterval,
@@ -87,6 +98,11 @@ class AskRFDataset:
     accepted_records: list[AskRFRecord]
     locations: list[dict[str, Any]]
     coverage_ranges_hz: list[tuple[int, int]]
+    presentation_eligible_capture_count: int = 0
+    unvalidated_capture_count: int = 0
+    technology_unvalidated_counts: dict[str, int] = field(default_factory=dict)
+    technology_coverage_counts: dict[str, int] = field(default_factory=dict)
+    technology_presentation_counts: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -101,6 +117,7 @@ async def answer_ask_rf(
     *,
     default_timezone: str = DEFAULT_DISPLAY_TIMEZONE,
     now: datetime | None = None,
+    settings: Settings | None = None,
 ) -> AskRFResponse:
     timezone = request.display_timezone or default_timezone
     normalized_question = normalize_question(request.question)
@@ -110,9 +127,7 @@ async def answer_ask_rf(
         return _unsupported_response(interval)
     if intent.kind == "time_period":
         return _time_period_response(interval)
-    if intent.technology in {"lte", "5g"}:
-        return _not_monitored_response(interval, intent.technology)
-    dataset = await load_presentation_dataset(session, interval)
+    dataset = await load_presentation_dataset(session, interval, settings=settings)
     return build_answer(intent, interval, dataset)
 
 
@@ -146,6 +161,17 @@ def build_answer(
     coverage = coverage_summary(dataset.coverage_ranges_hz)
     if coverage:
         limitations.append(coverage)
+
+    if intent.technology in {"lte", "5g"}:
+        tech_count = dataset.technology_coverage_counts.get(intent.technology, 0)
+        unvalidated_count = dataset.technology_unvalidated_counts.get(intent.technology, 0)
+        presentation_count = dataset.technology_presentation_counts.get(intent.technology, 0)
+        if tech_count == 0:
+            return _not_monitored_response(interval, intent.technology)
+        if unvalidated_count and presentation_count == 0:
+            return _profile_not_validated_response(
+                interval, intent.technology, time_label, location_label, limitations, dataset
+            )
 
     if dataset.real_capture_count == 0:
         return _response(
@@ -208,6 +234,12 @@ def build_answer(
                 "the 2.4 GHz band. The current captures cover only part of the full Bluetooth/BLE "
                 "range, so this does not prove Bluetooth was absent from the complete band."
             )
+        elif intent.technology in {"lte", "5g"}:
+            label = "5G" if intent.technology == "5g" else "LTE"
+            answer = (
+                f"The system monitored configured {label} candidate ranges between {time_label}. "
+                f"No {label} activity was confirmed in the accepted observations."
+            )
         else:
             answer = (
                 f"The system monitored part of the 2.4 GHz band between {time_label}. No signal "
@@ -243,8 +275,9 @@ def build_answer(
 
 
 async def load_presentation_dataset(
-    session: AsyncSession, interval: InterpretedInterval
+    session: AsyncSession, interval: InterpretedInterval, settings: Settings | None = None
 ) -> AskRFDataset:
+    profile_set = _load_scan_profiles(settings)
     result = await session.execute(
         select(models.Capture, models.Sensor)
         .join(models.Sensor, models.Sensor.sensor_id == models.Capture.sensor_id)
@@ -265,6 +298,7 @@ async def load_presentation_dataset(
 
     accepted: list[AskRFRecord] = []
     rejected_count = 0
+    unvalidated_count = 0
     if real_capture_ids:
         run_result = await session.execute(
             select(models.ModelRun, models.Capture, models.Sensor, models.AnalysisJob)
@@ -274,16 +308,37 @@ async def load_presentation_dataset(
             .where(models.ModelRun.capture_id.in_(real_capture_ids))
         )
         for run, capture, sensor, job in run_result.all():
-            record = presentation_record_from_run(run, capture, sensor, job)
+            record = presentation_record_from_run(run, capture, sensor, job, profile_set)
             if record is None:
-                rejected_count += 1
+                profile = scan_profile_for_capture(profile_set, capture.profile_id)
+                if profile is not None and not profile_presentation_eligible(
+                    profile, capture.profile_id
+                ):
+                    unvalidated_count += 1
+                else:
+                    rejected_count += 1
             else:
                 accepted.append(record)
 
     coverage_ranges: list[tuple[int, int]] = []
+    presentation_eligible_capture_count = 0
+    technology_unvalidated_counts = {"lte": 0, "5g": 0, "bluetooth": 0, "wifi": 0}
+    technology_coverage_counts = {"lte": 0, "5g": 0, "bluetooth": 0, "wifi": 0}
+    technology_presentation_counts = {"lte": 0, "5g": 0, "bluetooth": 0, "wifi": 0}
     for capture in capture_by_id.values():
         if frequency_range := capture_frequency_range(capture):
             coverage_ranges.append(frequency_range)
+        profile = scan_profile_for_capture(profile_set, capture.profile_id)
+        presentation_eligible = profile_presentation_eligible(profile, capture.profile_id)
+        if presentation_eligible:
+            presentation_eligible_capture_count += 1
+        for technology in technology_coverage_counts:
+            if _capture_matches_technology(capture, profile, technology):
+                technology_coverage_counts[technology] += 1
+                if not presentation_eligible:
+                    technology_unvalidated_counts[technology] += 1
+                else:
+                    technology_presentation_counts[technology] += 1
     locations = [sensor.location for sensor in sensor_by_capture.values() if sensor.location]
     return AskRFDataset(
         real_capture_count=len(real_rows),
@@ -291,6 +346,11 @@ async def load_presentation_dataset(
         accepted_records=accepted,
         locations=locations,
         coverage_ranges_hz=coverage_ranges,
+        presentation_eligible_capture_count=presentation_eligible_capture_count,
+        unvalidated_capture_count=unvalidated_count,
+        technology_unvalidated_counts=technology_unvalidated_counts,
+        technology_coverage_counts=technology_coverage_counts,
+        technology_presentation_counts=technology_presentation_counts,
     )
 
 
@@ -299,6 +359,7 @@ def presentation_record_from_run(
     capture: models.Capture,
     sensor: models.Sensor,
     job: models.AnalysisJob,
+    profile_set: ScanProfileSet | None = None,
 ) -> AskRFRecord | None:
     if sensor.adapter == "simulated":
         return None
@@ -321,6 +382,8 @@ def presentation_record_from_run(
         return None
     if (technologies or signals) and has_no_signal_marker(overall, quality_flags):
         return None
+    if not accepted_run_for_presentation(run, capture, sensor, job, profile_set):
+        return None
     frequency_range = capture_frequency_range(capture)
     return AskRFRecord(
         capture_id=capture.capture_id,
@@ -338,25 +401,6 @@ def presentation_record_from_run(
         overall_assessment=overall,
         quality_flags=quality_flags,
     )
-
-
-def capture_frequency_range(capture: models.Capture) -> tuple[int, int] | None:
-    radio = capture.radio or {}
-    raw_hardware = radio.get("hardware")
-    hardware: dict[str, Any] = raw_hardware if isinstance(raw_hardware, dict) else {}
-    center = hardware.get("actual_center_frequency_hz") or radio.get("center_frequency_hz")
-    bandwidth = hardware.get("actual_bandwidth_hz") or radio.get("bandwidth_hz")
-    if center is None or bandwidth is None:
-        return None
-    try:
-        center_hz = int(round(float(center)))
-        bandwidth_hz = int(round(float(bandwidth)))
-    except (TypeError, ValueError):
-        return None
-    if center_hz <= 0 or bandwidth_hz <= 0:
-        return None
-    half = bandwidth_hz // 2
-    return center_hz - half, center_hz + half
 
 
 def records_with_positive_findings(
@@ -439,6 +483,35 @@ def evidence_text(dataset: AskRFDataset, *, accepted_count: int) -> str:
     )
 
 
+def _profile_not_validated_response(
+    interval: InterpretedInterval,
+    technology: str,
+    time_label: str,
+    location_label: str,
+    limitations: list[str],
+    dataset: AskRFDataset,
+) -> AskRFResponse:
+    label = "5G" if technology == "5g" else technology.upper()
+    return _response(
+        "profile_not_validated",
+        (
+            f"The system monitored part of this frequency range during {time_label}, but "
+            f"technology identification for the scan profile has not yet been validated. "
+            f"No reliable {label} conclusion can be provided."
+        ),
+        interval,
+        time_label,
+        location_label,
+        evidence_text(dataset, accepted_count=len(dataset.accepted_records)),
+        limitations
+        + [
+            "Experimental scan profiles can show that a range was captured, but they do not "
+            "establish technology presence or absence in Ask RF."
+        ],
+        dataset,
+    )
+
+
 def _partial_response(
     interval: InterpretedInterval,
     time_label: str,
@@ -476,7 +549,10 @@ def _not_monitored_response(interval: InterpretedInterval, technology: str) -> A
         "monitored area",
         f"No configured {label} coverage is available in the current scan profiles.",
         DEFAULT_LIMITATIONS
-        + ["LTE and 5G NR scan profiles are reserved for a later multi-band milestone."],
+        + [
+            "Only explicitly enabled, real scan-profile captures can establish monitored coverage "
+            "for LTE or 5G questions."
+        ],
         None,
     )
 
@@ -580,6 +656,36 @@ def _list_of_dicts(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
+
+
+def _load_scan_profiles(settings: Settings | None) -> ScanProfileSet | None:
+    if settings is None:
+        return None
+    try:
+        return load_scan_profile_set(
+            settings.scan_profile_config,
+            expected_profile_set=settings.scan_profile_set,
+        )
+    except Exception:
+        return None
+
+
+def _capture_matches_technology(
+    capture: models.Capture,
+    profile: Any,
+    technology: str,
+) -> bool:
+    if profile_matches_technology(profile, technology):
+        return True
+    frequency_range = capture_frequency_range(capture)
+    if frequency_range is None:
+        return False
+    if technology == "bluetooth":
+        return (
+            frequency_range[0] <= BLUETOOTH_RANGE_HZ[1]
+            and frequency_range[1] >= BLUETOOTH_RANGE_HZ[0]
+        )
+    return False
 
 
 # Tiny import-time check for systems whose strftime lacks %-I (not expected on Linux).

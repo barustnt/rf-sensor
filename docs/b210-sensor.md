@@ -205,3 +205,48 @@ spectrogram are persisted, the analysis job completes or records a parser/model 
 and the dashboard displays provenance. Any RF-GPT label is an unverified model observation.
 Internally inconsistent model output is preserved as raw response, rejected from trusted findings,
 and must not produce an event or alert.
+
+## Sequential scan mode (Milestone 6)
+
+The original one-shot and continuous B210 commands above are unchanged. Milestone 6 adds an explicit
+scan entry point for sequential retuning across a small operator-selected allowlist of scan profiles.
+It is still receive-only and uses the same B210 adapter, spool, upload, heartbeat, and `atheer-hann-v1`
+preprocessing path for each slice.
+
+Dry-run the plan before touching hardware:
+
+```bash
+RF_SENSOR_ADAPTER=b210 \
+RF_SCAN_ENABLED_PROFILE_IDS=uae_shared_2400_2483_5 \
+RF_SCAN_MAX_SLICES_PER_CYCLE=2 \
+make PYTHON=/home/user/miniconda3/envs/rf-b210/bin/python scan-plan
+```
+
+Run one limited scan cycle only after the API is running and the shared sensor token is configured:
+
+```bash
+RF_SENSOR_TOKEN="${RF_SENSOR_TOKEN:?set the same token used by API}" \
+RF_SENSOR_ADAPTER=b210 \
+RF_SENSOR_ID=laptop-b210-001 \
+RF_PLATFORM_URL=http://127.0.0.1:8000 \
+RF_B210_DEVICE_ARGS=serial=321D88A \
+RF_B210_SERIAL=321D88A \
+RF_SCAN_ENABLED_PROFILE_IDS=uae_shared_2400_2483_5 \
+RF_SCAN_MAX_SLICES_PER_CYCLE=2 \
+RF_B210_PERSIST_RAW_IQ=false \
+/home/user/miniconda3/envs/rf-b210/bin/python -m rf_platform.sensor_agent.main --scan --scan-one-cycle --scan-max-slices 2
+```
+
+Continuous scan cycles use the Make target after the same explicit allowlist is set:
+
+```bash
+RF_SENSOR_ADAPTER=b210 \
+RF_SENSOR_ID=laptop-b210-001 \
+RF_SCAN_ENABLED_PROFILE_IDS=uae_shared_2400_2483_5 \
+make PYTHON=/home/user/miniconda3/envs/rf-b210/bin/python b210-scan
+```
+
+The scanner never silently falls back to simulated mode. It pauses when this sensor has too many
+queued/running/retry-pending analysis jobs, applies bounded cooldown after API or hardware failure,
+and finishes the current capture before stopping on SIGINT/SIGTERM. Full UAE catalogue sweeps can be
+large; see `docs/scan-profiles.md` before enabling more than a small test allowlist.

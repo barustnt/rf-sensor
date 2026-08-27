@@ -16,13 +16,14 @@ from rf_platform.backend.services.ingestion import (
     job_summary,
     publish_pending_outbox,
 )
+from rf_platform.common.band_compatibility import BAND_INCOMPATIBLE
 from rf_platform.common.broker import ANALYSIS_REQUESTED, NatsEventBus
 from rf_platform.common.time import utc_now
 
 router = APIRouter(prefix="/api/v1", tags=["analyses"])
 
 LIMITATION_NOTICE = "Model output is an RF-GPT observation, not verified ground truth."
-NON_RETRYABLE_JOB_ERROR_CATEGORIES = {"semantic_inconsistency"}
+NON_RETRYABLE_JOB_ERROR_CATEGORIES = {"semantic_inconsistency", BAND_INCOMPATIBLE}
 
 
 def _job_retry_eligible(job: models.AnalysisJob) -> bool:

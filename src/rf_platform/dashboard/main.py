@@ -8,7 +8,12 @@ from rf_platform.dashboard.api_client import DashboardApiClient
 from rf_platform.dashboard.tabs.alerts import render_alerts, update_alert_status
 from rf_platform.dashboard.tabs.jobs import render_job_list, render_jobs, retry_job
 from rf_platform.dashboard.tabs.logs import render_logs
-from rf_platform.dashboard.tabs.operations import render_metrics, run_retention_report
+from rf_platform.dashboard.tabs.operations import (
+    render_coverage,
+    render_metrics,
+    render_scan_profiles,
+    run_retention_report,
+)
 from rf_platform.dashboard.tabs.outputs import render_output_detail, render_outputs
 from rf_platform.dashboard.tabs.overview import render_overview
 from rf_platform.dashboard.tabs.sensors import render_sensors
@@ -202,6 +207,24 @@ def build_dashboard():  # type: ignore[no-untyped-def]
             metrics = gr.JSON(label="Operational health and metrics")
             metrics_button: Any = gr.Button("Refresh metrics")
             metrics_button.click(lambda: render_metrics(client), outputs=metrics)
+            scan_profiles = gr.JSON(label="Read-only scan profile plan")
+            scan_profiles_button: Any = gr.Button("Refresh scan profiles")
+            scan_profiles_button.click(lambda: render_scan_profiles(client), outputs=scan_profiles)
+            coverage_sensor = gr.Textbox(label="Coverage sensor filter")
+            coverage_start = gr.Textbox(label="Coverage start UTC")
+            coverage_end = gr.Textbox(label="Coverage end UTC")
+            coverage = gr.JSON(label="Read-only scan coverage")
+            coverage_button: Any = gr.Button("Refresh coverage")
+            coverage_button.click(
+                lambda sid, start, end: render_coverage(
+                    client,
+                    sensor_id=sid or None,
+                    start_utc=start or None,
+                    end_utc=end or None,
+                ),
+                inputs=[coverage_sensor, coverage_start, coverage_end],
+                outputs=coverage,
+            )
             retention_actor = gr.Textbox(label="Retention report actor", value="operator")
             retention = gr.JSON(label="Report-only retention result")
             retention_button: Any = gr.Button("Generate retention report (no deletion)")

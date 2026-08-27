@@ -12,6 +12,7 @@ from rf_platform.backend.api.v1.pagination import (
 from rf_platform.backend.db import models
 from rf_platform.backend.dependencies import db_session, require_sensor_auth, settings_dependency
 from rf_platform.backend.services.control import update_desired_profile
+from rf_platform.backend.services.coverage import sensor_job_backlog
 from rf_platform.backend.services.registry import (
     desired_state,
     record_heartbeat,
@@ -109,6 +110,16 @@ async def get_desired_state(
         return await desired_state(session, sensor_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/{sensor_id}/jobs/summary")
+async def get_sensor_jobs_summary(
+    sensor_id: str,
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, object]:
+    if await session.get(models.Sensor, sensor_id) is None:
+        raise HTTPException(status_code=404, detail="sensor not found")
+    return await sensor_job_backlog(session, sensor_id=sensor_id)
 
 
 @router.put("/{sensor_id}/desired-state")

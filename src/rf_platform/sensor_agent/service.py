@@ -12,6 +12,7 @@ import httpx
 from rf_platform import __version__
 from rf_platform.common.config import Settings
 from rf_platform.common.time import utc_now
+from rf_platform.contracts.capture import CaptureProfile
 from rf_platform.contracts.sensor import (
     SensorHeartbeat,
     SensorLocation,
@@ -118,6 +119,15 @@ class SensorService:
         capabilities = await self.adapter.capabilities()
         profile = load_profile(profile_id or self.settings.sensor_profile)
         validate_profile_against_capabilities(profile, capabilities)
+        return await self.capture_profile_to_spool(profile, validate_capabilities=False)
+
+    async def capture_profile_to_spool(
+        self, profile: CaptureProfile, *, validate_capabilities: bool = True
+    ) -> SpoolItem:
+        await self.adapter.open()
+        if validate_capabilities:
+            capabilities = await self.adapter.capabilities()
+            validate_profile_against_capabilities(profile, capabilities)
         await self.adapter.apply_profile(profile)
         bundle = await self.adapter.capture(CaptureRequest(profile=profile))
         self.last_capture_utc = bundle.envelope.ended_at_utc
@@ -131,6 +141,15 @@ class SensorService:
             if result.get("capture_id") == item.envelope.capture_id and delete_after_success:
                 self.spool.delete(item)
         return results
+
+    async def job_backlog(self) -> dict[str, object]:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{str(self.settings.platform_url).rstrip('/')}/api/v1/sensors/"
+                f"{self.settings.sensor_id}/jobs/summary"
+            )
+        response.raise_for_status()
+        return response.json()
 
     async def run_once(self, keep_spool_after_upload: bool = False) -> dict[str, object]:
         await self.register()

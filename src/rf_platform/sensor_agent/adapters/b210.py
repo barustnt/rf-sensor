@@ -12,6 +12,12 @@ from rf_platform import __version__
 from rf_platform.common.config import Settings
 from rf_platform.common.ids import new_id
 from rf_platform.common.logging import get_logger
+from rf_platform.common.scan_profiles import (
+    B210_MAX_FREQUENCY_HZ,
+    B210_MAX_SAMPLE_RATE_SPS,
+    B210_MIN_FREQUENCY_HZ,
+    load_scan_profile_set,
+)
 from rf_platform.common.time import utc_now
 from rf_platform.contracts.capture import (
     ArtifactDescriptor,
@@ -355,11 +361,19 @@ class B210SensorAdapter:
             "calibration",
             "device_experiment",
         ]
+        try:
+            scan_set = load_scan_profile_set(
+                self.settings.scan_profile_config,
+                expected_profile_set=self.settings.scan_profile_set,
+            )
+            profiles.extend(profile.profile_id for profile in scan_set.profiles)
+        except Exception:
+            pass
         supported_profiles = list(dict.fromkeys(profiles))
         return SensorCapabilities(
-            frequency_min_hz=None,
-            frequency_max_hz=None,
-            maximum_sample_rate_sps=None,
+            frequency_min_hz=B210_MIN_FREQUENCY_HZ,
+            frequency_max_hz=B210_MAX_FREQUENCY_HZ,
+            maximum_sample_rate_sps=B210_MAX_SAMPLE_RATE_SPS,
             rx_channels=rx_channels,
             supported_profiles=supported_profiles,
         )

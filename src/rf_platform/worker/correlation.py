@@ -4,6 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from rf_platform.backend.db import models
+from rf_platform.backend.services.coverage import capture_frequency_range
+from rf_platform.common.band_compatibility import check_findings_band_compatibility
 from rf_platform.common.ids import new_id
 from rf_platform.common.time import utc_now
 from rf_platform.contracts.analysis import AnalysisResult
@@ -27,6 +29,14 @@ async def correlate_result(
         or result_has_no_signal_marker(result)
         or result_is_semantically_inconsistent(result)
     ):
+        return None
+    compatibility = check_findings_band_compatibility(
+        technologies=[finding.model_dump(mode="json") for finding in result.technologies],
+        signals=[finding.model_dump(mode="json") for finding in result.signals],
+        frequency_range_hz=capture_frequency_range(capture),
+        profile_id=getattr(capture, "profile_id", None),
+    )
+    if compatibility.incompatible:
         return None
     existing = await _event_for_analysis(session, result.analysis_id)
     if existing is not None:

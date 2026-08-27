@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 
 from rf_platform.common.config import get_settings
 from rf_platform.common.logging import configure_logging, get_logger
+from rf_platform.sensor_agent.scanner import B210ScanRunner, dry_run_plan
 from rf_platform.sensor_agent.service import SensorService
 
 
@@ -55,13 +57,37 @@ async def run_forever() -> None:
         await asyncio.sleep(sleep_seconds)
 
 
+async def run_b210_scan(
+    *, one_cycle: bool = False, max_slices: int | None = None
+) -> dict[str, object]:
+    configure_logging()
+    runner = B210ScanRunner(get_settings())
+    runner.install_signal_handlers()
+    return await runner.run(one_cycle=one_cycle, max_slices=max_slices)
+
+
 def cli() -> None:
     parser = argparse.ArgumentParser(description="Run RF sensor agent")
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--keep-spool-after-upload", action="store_true")
+    parser.add_argument(
+        "--scan-plan", action="store_true", help="Print a dry-run scan plan and exit"
+    )
+    parser.add_argument("--scan", action="store_true", help="Run sequential B210 scan cycles")
+    parser.add_argument("--scan-one-cycle", action="store_true", help="Run one complete scan cycle")
+    parser.add_argument("--scan-max-slices", type=int, default=None)
     args = parser.parse_args()
     try:
-        if args.once:
+        if args.scan_plan:
+            configure_logging()
+            print(
+                json.dumps(dry_run_plan(get_settings(), max_slices=args.scan_max_slices), indent=2)
+            )
+        elif args.scan:
+            asyncio.run(
+                run_b210_scan(one_cycle=args.scan_one_cycle, max_slices=args.scan_max_slices)
+            )
+        elif args.once:
             asyncio.run(run_once(keep_spool_after_upload=args.keep_spool_after_upload))
         else:
             asyncio.run(run_forever())

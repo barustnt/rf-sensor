@@ -1,0 +1,289 @@
+schema_version = "1.0"
+profile_set_id = "uae-b210-sub6-v1"
+version = "2026.1"
+display_name = "UAE B210 receive-only sub-6 GHz reference scan catalogue"
+source_notes = [
+  "UAE National Frequency Plan, TDRA public table, accessed 2026-08-27.",
+  "TDRA UAE Spectrum Outlook 2026-2031 v2.0, published 2025-11-01.",
+  "TDRA Ultra-Wide Band and Short Range Devices Regulations v5.0, published 2023-10-30.",
+  "Ettus USRP B210 specifications: receive range 70 MHz-6 GHz, up to 56 MHz real-time bandwidth and 61.44 MS/s quadrature.",
+]
+
+[defaults]
+capture_bandwidth_hz = 20000000
+sample_rate_sps = 20000000
+slice_step_hz = 18000000
+slice_overlap_hz = 2000000
+gain_db = 30.0
+antenna = "RX2"
+sample_count = 1048576
+enabled = false
+qualification_state = "experimental"
+presentation_policy = "technical_only"
+known_limitations = [
+  "Reference ranges are regulatory and engineering candidates, not proof of active operator deployment.",
+  "Frequency compatibility is necessary but not sufficient for technology confirmation.",
+]
+
+[[profiles]]
+profile_id = "uae_imt_694_790"
+display_name = "Candidate IMT 694-790 MHz"
+start_frequency_hz = 694000000
+end_frequency_hz = 790000000
+priority = 10
+candidate_families = ["cellular", "lte_family", "5g_nr_family"]
+regulatory_source_note = "UAE National Frequency Plan and TDRA Spectrum Outlook IMT candidate range."
+
+[[profiles]]
+profile_id = "uae_imt_791_862"
+display_name = "Candidate IMT 791-862 MHz"
+start_frequency_hz = 791000000
+end_frequency_hz = 862000000
+priority = 20
+candidate_families = ["cellular", "lte_family", "5g_nr_family"]
+regulatory_source_note = "UAE National Frequency Plan and TDRA Spectrum Outlook IMT candidate range."
+
+[[profiles]]
+profile_id = "uae_imt_880_960"
+display_name = "Candidate IMT 880-960 MHz"
+start_frequency_hz = 880000000
+end_frequency_hz = 960000000
+priority = 30
+candidate_families = ["cellular", "lte_family", "5g_nr_family"]
+regulatory_source_note = "UAE National Frequency Plan and TDRA Spectrum Outlook IMT candidate range."
+
+[[profiles]]
+profile_id = "uae_imt_1427_1492"
+display_name = "Candidate IMT 1427-1492 MHz"
+start_frequency_hz = 1427000000
+end_frequency_hz = 1492000000
+priority = 40
+candidate_families = ["cellular", "lte_family", "5g_nr_family"]
+regulatory_source_note = "UAE National Frequency Plan and TDRA Spectrum Outlook IMT candidate range."
+
+[[profiles]]
+profile_id = "uae_imt_1710_1785"
+display_name = "Candidate IMT uplink 1710-1785 MHz"
+start_frequency_hz = 1710000000
+end_frequency_hz = 1785000000
+priority = 50
+candidate_families = ["cellular", "lte_family", "5g_nr_family"]
+regulatory_source_note = "UAE National Frequency Plan and TDRA Spectrum Outlook IMT candidate range."
+
+[[profiles]]
+profile_id = "uae_imt_1805_1880"
+display_name = "Candidate IMT downlink 1805-1880 MHz"
+start_frequency_hz = 1805000000
+end_frequency_hz = 1880000000
+priority = 60
+candidate_families = ["cellular", "lte_family", "5g_nr_family"]
+regulatory_source_note = "UAE National Frequency Plan and TDRA Spectrum Outlook IMT candidate range."
+
+[[profiles]]
+profile_id = "uae_imt_1920_1980"
+display_name = "Candidate IMT uplink 1920-1980 MHz"
+start_frequency_hz = 1920000000
+end_frequency_hz = 1980000000
+priority = 70
+candidate_families = ["cellular", "lte_family", "5g_nr_family"]
+regulatory_source_note = "UAE National Frequency Plan and TDRA Spectrum Outlook IMT candidate range."
+
+[[profiles]]
+profile_id = "uae_imt_2110_2170"
+display_name = "Candidate IMT downlink 2110-2170 MHz"
+start_frequency_hz = 2110000000
+end_frequency_hz = 2170000000
+priority = 80
+candidate_families = ["cellular", "lte_family", "5g_nr_family"]
+regulatory_source_note = "UAE National Frequency Plan and TDRA Spectrum Outlook IMT candidate range."
+
+[[profiles]]
+profile_id = "uae_imt_1980_2010"
+display_name = "Candidate IMT satellite-adjacent 1980-2010 MHz"
+start_frequency_hz = 1980000000
+end_frequency_hz = 2010000000
+priority = 90
+candidate_families = ["cellular", "lte_family", "5g_nr_family"]
+regulatory_source_note = "UAE National Frequency Plan and TDRA Spectrum Outlook candidate range."
+known_limitations = ["Treat as candidate coverage only; do not infer an operator or service type from frequency alone."]
+
+[[profiles]]
+profile_id = "uae_imt_2170_2200"
+display_name = "Candidate IMT satellite-adjacent 2170-2200 MHz"
+start_frequency_hz = 2170000000
+end_frequency_hz = 2200000000
+priority = 100
+candidate_families = ["cellular", "lte_family", "5g_nr_family"]
+regulatory_source_note = "UAE National Frequency Plan and TDRA Spectrum Outlook candidate range."
+known_limitations = ["Treat as candidate coverage only; do not infer an operator or service type from frequency alone."]
+
+[[profiles]]
+profile_id = "uae_imt_2300_2400"
+display_name = "Candidate IMT TDD 2300-2400 MHz"
+start_frequency_hz = 2300000000
+end_frequency_hz = 2400000000
+priority = 110
+candidate_families = ["cellular", "lte_family", "5g_nr_family"]
+regulatory_source_note = "UAE National Frequency Plan and TDRA Spectrum Outlook IMT candidate range."
+
+[[profiles]]
+profile_id = "uae_imt_2496_2690"
+display_name = "Candidate IMT 2496-2690 MHz"
+start_frequency_hz = 2496000000
+end_frequency_hz = 2690000000
+priority = 120
+candidate_families = ["cellular", "lte_family", "5g_nr_family"]
+regulatory_source_note = "UAE National Frequency Plan and TDRA Spectrum Outlook IMT candidate range."
+
+[[profiles]]
+profile_id = "uae_nr_tdd_3300_3400"
+display_name = "Candidate LTE/NR TDD 3300-3400 MHz"
+start_frequency_hz = 3300000000
+end_frequency_hz = 3400000000
+priority = 130
+candidate_families = ["cellular", "lte_family", "5g_nr_family"]
+regulatory_source_note = "TDRA Spectrum Outlook mid-band candidate range."
+known_limitations = ["LTE and 5G NR may overlap in some TDD ranges; do not force a technology label from frequency alone."]
+
+[[profiles]]
+profile_id = "uae_nr_tdd_3400_3800"
+display_name = "Candidate LTE/NR TDD 3400-3800 MHz"
+start_frequency_hz = 3400000000
+end_frequency_hz = 3800000000
+priority = 140
+candidate_families = ["cellular", "lte_family", "5g_nr_family"]
+regulatory_source_note = "TDRA Spectrum Outlook mid-band candidate range."
+known_limitations = ["LTE and 5G NR may overlap in some TDD ranges; do not force a technology label from frequency alone."]
+
+[[profiles]]
+profile_id = "uae_shared_2400_2483_5"
+display_name = "Shared 2.4 GHz ISM/WLAN/Bluetooth range"
+start_frequency_hz = 2400000000
+end_frequency_hz = 2483500000
+priority = 200
+candidate_families = ["wifi_wlan", "bluetooth_classic", "ble", "ism_srd", "wideband_activity"]
+regulatory_source_note = "TDRA UWB/SRD Regulations v5.0 and common 2.4 GHz ISM/WLAN/Bluetooth engineering reference."
+known_limitations = ["A single 20 MHz capture covers only part of the complete Bluetooth/BLE and 2.4 GHz shared range."]
+
+[[profiles]]
+profile_id = "uae_wifi5_5150_5250"
+display_name = "Wi-Fi/WLAN 5 GHz 5150-5250 MHz"
+start_frequency_hz = 5150000000
+end_frequency_hz = 5250000000
+priority = 300
+candidate_families = ["wifi_wlan"]
+regulatory_source_note = "UAE National Frequency Plan and TDRA SRD/WLAN regulatory reference."
+known_limitations = ["Do not infer AP identity, ownership, user identity, or traffic contents."]
+
+[[profiles]]
+profile_id = "uae_wifi5_5250_5350"
+display_name = "Wi-Fi/WLAN 5 GHz 5250-5350 MHz"
+start_frequency_hz = 5250000000
+end_frequency_hz = 5350000000
+priority = 310
+candidate_families = ["wifi_wlan"]
+regulatory_source_note = "UAE National Frequency Plan and TDRA SRD/WLAN regulatory reference."
+known_limitations = ["Do not infer AP identity, ownership, user identity, or traffic contents."]
+
+[[profiles]]
+profile_id = "uae_wifi5_5470_5725"
+display_name = "Wi-Fi/WLAN 5 GHz 5470-5725 MHz"
+start_frequency_hz = 5470000000
+end_frequency_hz = 5725000000
+priority = 320
+candidate_families = ["wifi_wlan"]
+regulatory_source_note = "UAE National Frequency Plan and TDRA SRD/WLAN regulatory reference."
+known_limitations = ["Do not infer AP identity, ownership, user identity, or traffic contents."]
+
+[[profiles]]
+profile_id = "uae_wifi5_5725_5875"
+display_name = "Wi-Fi/WLAN 5 GHz 5725-5875 MHz"
+start_frequency_hz = 5725000000
+end_frequency_hz = 5875000000
+priority = 330
+candidate_families = ["wifi_wlan", "ism_srd"]
+regulatory_source_note = "UAE National Frequency Plan and TDRA SRD/WLAN regulatory reference."
+known_limitations = ["This range overlaps SRD/ISM use; use generic language unless exact technology evidence is independently supported."]
+
+[[profiles]]
+profile_id = "uae_srd_433_05_434_79"
+display_name = "UAE SRD/ISM 433.05-434.79 MHz"
+start_frequency_hz = 433050000
+end_frequency_hz = 434790000
+priority = 400
+candidate_families = ["ism_srd", "wideband_activity"]
+regulatory_source_note = "TDRA UWB/SRD Regulations v5.0 SRD candidate range."
+known_limitations = ["Use generic SRD/ISM language unless exact technology is independently supported."]
+
+[[profiles]]
+profile_id = "uae_srd_863_870"
+display_name = "UAE SRD/ISM 863-870 MHz"
+start_frequency_hz = 863000000
+end_frequency_hz = 870000000
+priority = 410
+candidate_families = ["ism_srd", "wideband_activity"]
+regulatory_source_note = "TDRA UWB/SRD Regulations v5.0 SRD candidate range."
+known_limitations = ["Use generic SRD/ISM language unless exact technology is independently supported."]
+
+[[profiles]]
+profile_id = "uae_srd_915_921"
+display_name = "UAE SRD/ISM 915-921 MHz"
+start_frequency_hz = 915000000
+end_frequency_hz = 921000000
+priority = 420
+candidate_families = ["ism_srd", "wideband_activity"]
+regulatory_source_note = "TDRA UWB/SRD Regulations v5.0 SRD candidate range."
+known_limitations = ["Use generic SRD/ISM language unless exact technology is independently supported."]
+
+[[profiles]]
+profile_id = "uae_srd_2400_2483_5"
+display_name = "UAE SRD/ISM 2400-2483.5 MHz"
+start_frequency_hz = 2400000000
+end_frequency_hz = 2483500000
+priority = 430
+candidate_families = ["ism_srd", "wifi_wlan", "bluetooth_classic", "ble", "wideband_activity"]
+regulatory_source_note = "TDRA UWB/SRD Regulations v5.0 SRD candidate range."
+known_limitations = ["Use generic SRD/ISM language unless exact technology is independently supported."]
+
+[[profiles]]
+profile_id = "uae_srd_5725_5875"
+display_name = "UAE SRD/ISM 5725-5875 MHz"
+start_frequency_hz = 5725000000
+end_frequency_hz = 5875000000
+priority = 440
+candidate_families = ["ism_srd", "wifi_wlan", "wideband_activity"]
+regulatory_source_note = "TDRA UWB/SRD Regulations v5.0 SRD candidate range."
+known_limitations = ["Use generic SRD/ISM language unless exact technology is independently supported."]
+
+[[profiles]]
+profile_id = "uae_future_study_3800_4200"
+display_name = "Future-study/replanning placeholder 3800-4200 MHz"
+start_frequency_hz = 3800000000
+end_frequency_hz = 4200000000
+priority = 900
+candidate_families = ["cellular", "wideband_activity"]
+qualification_state = "regulatory_review_required"
+presentation_policy = "technical_only"
+regulatory_source_note = "Placeholder for bands requiring updated explicit UAE configuration decisions before current-coverage use."
+known_limitations = ["Not enabled as current operator coverage. Requires regulatory review before scanning."]
+
+[[unsupported_profiles]]
+profile_id = "uae_wifi6e_full_5945_6425"
+display_name = "Full Wi-Fi 6E 5945-6425 MHz"
+start_frequency_hz = 5945000000
+end_frequency_hz = 6425000000
+reason = "USRP B210 upper receive limit is 6 GHz; it cannot cover the complete 6E band."
+
+[[unsupported_profiles]]
+profile_id = "uae_5g_mmwave_24250_plus"
+display_name = "5G mmWave beginning at 24.25 GHz"
+start_frequency_hz = 24250000000
+end_frequency_hz = 29500000000
+reason = "Unsupported by USRP B210 receive range."
+
+[[unsupported_profiles]]
+profile_id = "uae_wifi_srd_60ghz"
+display_name = "60 GHz Wi-Fi/SRD"
+start_frequency_hz = 57000000000
+end_frequency_hz = 66000000000
+reason = "Unsupported by USRP B210 receive range."

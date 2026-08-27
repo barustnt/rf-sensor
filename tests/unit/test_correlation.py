@@ -222,3 +222,40 @@ async def test_event_alert_and_evidence_correlation_is_idempotent_for_analysis()
         ("capture", "capture-1"),
         ("analysis", "analysis-idempotent"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_correlation_rejects_band_incompatible_result() -> None:
+    result = _result(
+        technologies=[
+            TechnologyFinding(
+                label="Bluetooth",
+                model_score=None,
+                observation="Bluetooth protocol observation.",
+                evidence=["capture_id:capture-1"],
+            )
+        ],
+        overall_assessment="RF observation only.",
+    )
+    capture = SimpleNamespace(
+        capture_id="capture-1",
+        sensor_id="laptop-b210-001",
+        profile_id="uae_srd_433_05_434_79",
+        started_at_utc=datetime(2026, 8, 26, tzinfo=UTC),
+        ended_at_utc=datetime(2026, 8, 26, 0, 0, 1, tzinfo=UTC),
+        radio={
+            "center_frequency_hz": 433_920_000,
+            "bandwidth_hz": 1_740_000,
+            "hardware": {
+                "actual_center_frequency_hz": 433_920_000,
+                "actual_bandwidth_hz": 1_740_000,
+            },
+        },
+    )
+    session = _FakeCorrelationSession(result.analysis_id)
+
+    event = await correlate_result(cast(Any, session), cast(Any, capture), result)
+
+    assert event is None
+    assert session.events == []
+    assert session.alerts == []

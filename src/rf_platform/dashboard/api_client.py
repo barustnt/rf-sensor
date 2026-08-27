@@ -185,6 +185,22 @@ class DashboardApiClient:
     def metrics(self) -> dict[str, Any]:
         return self._get("/api/v1/platform/metrics")
 
+    def scan_profiles(self) -> dict[str, Any]:
+        return self._get("/api/v1/scan-profiles")
+
+    def coverage(
+        self,
+        sensor_id: str | None = None,
+        start_utc: str | None = None,
+        end_utc: str | None = None,
+    ) -> dict[str, Any]:
+        return self._get(
+            "/api/v1/coverage",
+            sensor_id=sensor_id,
+            start_utc=start_utc,
+            end_utc=end_utc,
+        )
+
     def retention_report(self, actor: str = "operator") -> dict[str, Any]:
         return self._post("/api/v1/platform/retention/report", {"actor": actor})
 

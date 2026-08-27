@@ -82,5 +82,59 @@ conda run -n rf-intel python scripts/run_real_model_smoke.py
 - Internally inconsistent historical output is preserved in the platform but rejected from Ask RF
   trusted findings and produces no presentation event or alert claim.
 - Bluetooth/BLE answers mention partial 2.4 GHz coverage when only a slice of the band was
-  monitored. LTE/5G questions state that configured bands were not monitored until later scan
-  profiles exist.
+  monitored. LTE/5G questions now distinguish no eligible coverage from experimental monitored
+  ranges that are not yet presentation-validated.
+
+## Milestone 6 UAE multi-band scanning and coverage
+
+Milestone 6 adds a separate receive-only B210 scan mode without changing the existing B210 `--once`
+command. Scanning is disabled unless the operator supplies an explicit profile allowlist. An empty
+`RF_SCAN_ENABLED_PROFILE_IDS` plans and captures nothing.
+
+Dry-run plan validation is safe in `rf-intel` or `rf-b210`; it does not open hardware, call the API,
+consume jobs, or invoke vLLM:
+
+```bash
+RF_SENSOR_ADAPTER=b210 \
+RF_SCAN_ENABLED_PROFILE_IDS=uae_shared_2400_2483_5 \
+RF_SCAN_MAX_SLICES_PER_CYCLE=2 \
+make PYTHON='conda run -n rf-intel python' scan-plan
+```
+
+Sequential scan mode must run from the UHD-capable `rf-b210` environment and uses one B210 capture
+operation at a time:
+
+```bash
+RF_SENSOR_TOKEN="${RF_SENSOR_TOKEN:?set the shared sensor token}" \
+RF_SENSOR_ADAPTER=b210 \
+RF_SENSOR_ID=laptop-b210-001 \
+RF_PLATFORM_URL=http://127.0.0.1:8000 \
+RF_B210_DEVICE_ARGS=serial=321D88A \
+RF_B210_SERIAL=321D88A \
+RF_SCAN_ENABLED_PROFILE_IDS=uae_shared_2400_2483_5 \
+RF_SCAN_MAX_SLICES_PER_CYCLE=2 \
+RF_B210_PERSIST_RAW_IQ=false \
+/home/user/miniconda3/envs/rf-b210/bin/python -m rf_platform.sensor_agent.main --scan --scan-one-cycle --scan-max-slices 2
+```
+
+The scanner checks sensor-scoped in-flight analysis jobs before each slice. Queued, running, and
+retry-pending jobs count toward `RF_SCAN_MAX_INFLIGHT_JOBS`; succeeded, failed, and dead-letter jobs
+do not. API outages and hardware failures pause with bounded cooldowns. This prevents RF-GPT
+backlog from growing unbounded when inference is much slower than capture.
+
+Technical operators can inspect read-only scan and coverage data in the Command Center Operations
+section or by API:
+
+```text
+GET /api/v1/scan-profiles
+GET /api/v1/coverage?start_utc=...&end_utc=...&sensor_id=...
+GET /api/v1/sensors/{sensor_id}/jobs/summary
+```
+
+The browser exposes no start/stop, retune, transmit, token, password, or profile-promotion controls.
+Ask RF remains separate and read-only on port 7861.
+
+See `docs/scan-profiles.md` for the UAE catalogue, regulatory/source notes, qualification states,
+coverage accounting, band-compatibility checks, and the full manual acceptance plan. RF-GPT labels
+remain unverified model observations. Experimental profiles may be scanned and shown to technical
+operators, but do not establish presentation-ready technology conclusions.

@@ -139,3 +139,44 @@ def test_dashboard_package_uses_api_client_only() -> None:
     assert "sqlalchemy" not in haystack.lower()
     assert "backend.db" not in haystack.lower()
     assert "SensorService" not in haystack
+
+
+@respx.mock
+def test_dashboard_api_client_scan_profiles_and_coverage_are_read_only() -> None:
+    profiles = respx.get("http://api.local/api/v1/scan-profiles").mock(
+        return_value=httpx.Response(200, json={"profile_set": {"profiles": []}, "slices": []})
+    )
+    coverage = respx.get("http://api.local/api/v1/coverage").mock(
+        return_value=httpx.Response(200, json={"profiles": [], "backlog": {}})
+    )
+    client = DashboardApiClient(_settings())
+
+    assert client.scan_profiles()["slices"] == []
+    assert (
+        client.coverage(
+            sensor_id="laptop-b210-001",
+            start_utc="2026-08-26T00:00:00Z",
+            end_utc="2026-08-26T01:00:00Z",
+        )["profiles"]
+        == []
+    )
+
+    assert profiles.called
+    params = coverage.calls.last.request.url.params
+    assert params["sensor_id"] == "laptop-b210-001"
+    assert params["start_utc"] == "2026-08-26T00:00:00Z"
+    assert params["end_utc"] == "2026-08-26T01:00:00Z"
+
+
+def test_command_center_scan_visibility_has_no_browser_scanner_controls() -> None:
+    source = Path("src/rf_platform/dashboard/main.py").read_text(encoding="utf-8")
+    operations = Path("src/rf_platform/dashboard/tabs/operations.py").read_text(encoding="utf-8")
+
+    assert "Read-only scan profile plan" in source
+    assert "Read-only scan coverage" in source
+    assert "render_scan_profiles" in source
+    assert "render_coverage" in source
+    assert "scanner controls" not in operations.lower()
+    forbidden_controls = ["start scan", "stop scan", "promote", "retune"]
+    for term in forbidden_controls:
+        assert term not in (source + operations).lower()

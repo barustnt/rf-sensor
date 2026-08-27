@@ -53,6 +53,7 @@ AskRFAnswerStatus = Literal[
     "no_data",
     "partial_data",
     "not_monitored",
+    "profile_not_validated",
     "unsupported_question",
     "unavailable",
 ]
