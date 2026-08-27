@@ -117,9 +117,21 @@ html, body { overflow-x: hidden; }
   border-radius: 18px !important;
   max-width: 100% !important;
 }
-.askrf-question-field label,
-.askrf-question-field .label-wrap {
-  display: none !important;
+.askrf-question-field textarea,
+.askrf-question-field input {
+  min-height: 6.5rem !important;
+  padding: 1rem 1.1rem !important;
+  border: 1px solid #bfdbfe !important;
+  font-size: 1.2rem !important;
+  line-height: 1.5 !important;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+}
+.askrf-question-field textarea:focus,
+.askrf-question-field input:focus {
+  border-color: #0284c7 !important;
+  outline: 3px solid rgba(14, 165, 233, 0.35) !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.14) !important;
 }
 .askrf-actions,
 .askrf-examples {
@@ -173,6 +185,10 @@ textarea, input {
   border-radius: 16px !important;
   box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04) !important;
   margin-top: .5rem !important;
+}
+.askrf-answer-region {
+  width: 100% !important;
+  max-width: 100% !important;
 }
 @media (max-width: 760px) {
   .gradio-container { padding: .75rem !important; }
@@ -253,23 +269,31 @@ def unavailable_response(
     return render_answer(response, question)
 
 
+def answer_region_update(visible: bool) -> dict[str, Any]:
+    return {"__type__": "update", "visible": visible}
+
+
 def submit_question(
     client: AskRFApiClient,
     question: str,
     context: dict[str, Any] | None,
-) -> tuple[str, str, str, dict[str, Any]]:
+) -> tuple[dict[str, Any], str, str, str, dict[str, Any]]:
     if not question.strip():
         question = "What technologies are nearby?"
     try:
         response = client.query(question, context or None)
     except httpx.HTTPError as exc:
         logger.warning("ask_rf_api_unavailable", error=exc.__class__.__name__)
-        return unavailable_response(question, client.display_timezone)
-    return render_answer(response, question)
+        question_html, answer_html, details, response_context = unavailable_response(
+            question, client.display_timezone
+        )
+        return answer_region_update(True), question_html, answer_html, details, response_context
+    question_html, answer_html, details, response_context = render_answer(response, question)
+    return answer_region_update(True), question_html, answer_html, details, response_context
 
 
-def reset_conversation() -> tuple[str, str, str, dict[str, Any], str]:
-    return "", "", "", {}, ""
+def reset_conversation() -> tuple[dict[str, Any], str, str, str, dict[str, Any], str]:
+    return answer_region_update(False), "", "", "", {}, ""
 
 
 def escape_visible(value: object) -> str:
@@ -289,14 +313,15 @@ def build_app():  # type: ignore[no-untyped-def]
     configure_logging()
     settings = get_settings()
     client = AskRFApiClient(settings)
-    with gr.Blocks(title="Ask RF", css=ASK_RF_CSS, theme=gr.themes.Soft(primary_hue="sky")) as app:
+    with gr.Blocks(title="Ask RF") as app:
         context_state = gr.State({})
         hero = gr.HTML(landing_markup(status_markup(client)))
         question = gr.Textbox(
-            label=None,
+            label="Question",
             show_label=False,
             placeholder="Ask about wireless activity or a time period…",
-            lines=2,
+            lines=3,
+            interactive=True,
             elem_classes=["askrf-question-field"],
         )
         with gr.Row(elem_classes=["askrf-actions"]):
@@ -306,34 +331,44 @@ def build_app():  # type: ignore[no-untyped-def]
             example_buttons = [
                 gr.Button(example, elem_classes=["askrf-example"]) for example in EXAMPLES
             ]
-        visible_question = gr.HTML("")
-        answer_card = gr.HTML("")
-        with gr.Accordion(
-            "How was this determined?", open=False, elem_classes=["askrf-disclosure"]
-        ):
-            details = gr.Markdown("")
+        with gr.Group(visible=False, elem_classes=["askrf-answer-region"]) as answer_region:
+            visible_question = gr.HTML("")
+            answer_card = gr.HTML("")
+            with gr.Accordion(
+                "How was this determined?", open=False, elem_classes=["askrf-disclosure"]
+            ):
+                details = gr.Markdown("")
 
         ask_button.click(
             lambda q, ctx: submit_question(client, q, ctx),
             inputs=[question, context_state],
-            outputs=[visible_question, answer_card, details, context_state],
+            outputs=[answer_region, visible_question, answer_card, details, context_state],
         )
         question.submit(
             lambda q, ctx: submit_question(client, q, ctx),
             inputs=[question, context_state],
-            outputs=[visible_question, answer_card, details, context_state],
+            outputs=[answer_region, visible_question, answer_card, details, context_state],
         )
         for button, example in zip(example_buttons, EXAMPLES, strict=True):
             button.click(lambda text=example: text, outputs=question)
         new_button.click(
             reset_conversation,
-            outputs=[visible_question, answer_card, details, context_state, question],
+            outputs=[
+                answer_region,
+                visible_question,
+                answer_card,
+                details,
+                context_state,
+                question,
+            ],
         )
         app.load(lambda: landing_markup(status_markup(client)), outputs=hero)
     return app
 
 
 def cli() -> None:
+    import gradio as gr
+
     parser = argparse.ArgumentParser(description="Run Ask RF presentation interface")
     parser.parse_args()
     settings = get_settings()
@@ -342,6 +377,8 @@ def cli() -> None:
         server_name=settings.ask_rf_host,
         server_port=settings.ask_rf_port,
         share=settings.gradio_share,
+        theme=gr.themes.Soft(primary_hue="sky"),
+        css=ASK_RF_CSS,
     )
 
 
