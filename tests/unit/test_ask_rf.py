@@ -17,12 +17,15 @@ from rf_platform.backend.services.ask_rf import (
     QuestionIntent,
     _not_monitored_response,
     _resolve_interval,
+    answer_ask_rf,
     build_answer,
+    interpret_question,
+    normalize_question,
     presentation_record_from_run,
 )
 from rf_platform.common.config import Settings
 from rf_platform.common.time import InterpretedInterval
-from rf_platform.contracts.api import AskRFResponse, QueryInterval
+from rf_platform.contracts.api import AskRFRequest, AskRFResponse, QueryInterval
 
 
 def _interval() -> InterpretedInterval:
@@ -344,6 +347,45 @@ def test_automatic_asia_dubai_timezone_setting() -> None:
     assert settings.display_timezone == "Asia/Dubai"
 
 
+def test_question_normalization_supports_happened_typo_and_spacing() -> None:
+    questions = [
+        "What happened today at 8 AM?",
+        "what happened today at 8 AM ?",
+        "  what   happend   today at 8 AM ?  ",
+    ]
+    now = datetime(2026, 8, 26, 0, 0, tzinfo=UTC)
+    intervals = [_resolve_interval(question, "Asia/Dubai", None, now) for question in questions]
+    answers = []
+    for question, interval in zip(questions, intervals, strict=True):
+        answers.append(
+            build_answer(
+                interpret_question(question),
+                interval,
+                _dataset(records=[_record(overall="No signals present.")]),
+            )
+        )
+
+    assert normalize_question(questions[-1]) == "what happened today at 8 am?"
+    assert {interval.start_utc for interval in intervals} == {
+        datetime(2026, 8, 26, 4, 0, tzinfo=UTC)
+    }
+    assert {interval.end_utc for interval in intervals} == {datetime(2026, 8, 26, 5, 0, tzinfo=UTC)}
+    assert {interpret_question(question).kind for question in questions} == {"summary"}
+    assert {answer.answer_status for answer in answers} == {"no_signal"}
+
+
+@pytest.mark.asyncio
+async def test_unrelated_question_remains_unsupported() -> None:
+    response = await answer_ask_rf(
+        cast(Any, None),
+        AskRFRequest(question="Can you identify the owner of this device?"),
+        now=datetime(2026, 8, 26, 0, 0, tzinfo=UTC),
+    )
+
+    assert response.answer_status == "unsupported_question"
+    assert "I can answer questions about wireless activity" in response.display_answer
+
+
 def test_rendered_answer_hides_json_and_technical_identifiers() -> None:
     response = AskRFResponse(
         answer_status="observation",
@@ -466,6 +508,38 @@ def test_api_unavailable_behavior_is_friendly() -> None:
     assert "temporarily unavailable" in answer
     assert "hidden technical detail" not in answer + details
     assert context == {}
+
+
+def test_ask_rf_css_enforces_readable_light_theme() -> None:
+    assert "background: #ffffff !important" in ASK_RF_CSS
+    assert ".askrf-title" in ASK_RF_CSS and "color: #06152b !important" in ASK_RF_CSS
+    assert ".askrf-heading" in ASK_RF_CSS and "color: #0f172a !important" in ASK_RF_CSS
+    assert ".askrf-supporting" in ASK_RF_CSS and "color: #1f2937 !important" in ASK_RF_CSS
+    assert ".askrf-answer" in ASK_RF_CSS and "color: #111827 !important" in ASK_RF_CSS
+    assert ".askrf-labels" in ASK_RF_CSS and "color: #334155 !important" in ASK_RF_CSS
+    assert ".askrf-question" in ASK_RF_CSS and "color: #075985 !important" in ASK_RF_CSS
+    assert ".askrf-disclosure" in ASK_RF_CSS and "color: #0f172a !important" in ASK_RF_CSS
+
+
+def test_ask_rf_component_source_hides_textbox_label_and_styles_light_controls() -> None:
+    source = Path("src/rf_platform/ask_rf/main.py").read_text(encoding="utf-8")
+
+    assert "label=None" in source
+    assert "show_label=False" in source
+    assert "askrf-primary" in source
+    assert "askrf-secondary" in source
+    assert "askrf-example" in source
+    assert "background: #ffffff !important" in ASK_RF_CSS
+    assert "border: 1px solid #bfdbfe" in ASK_RF_CSS
+    assert "color: #0f172a !important" in ASK_RF_CSS
+
+
+def test_ask_rf_css_wraps_responsively_without_fixed_overflow() -> None:
+    assert "overflow-x: hidden" in ASK_RF_CSS
+    assert "flex-wrap: wrap" in ASK_RF_CSS
+    assert "max-width: 100%" in ASK_RF_CSS
+    assert "@media (max-width: 760px)" in ASK_RF_CSS
+    assert "white-space: normal" in ASK_RF_CSS
 
 
 def test_command_center_no_longer_contains_ask_rf_tab() -> None:

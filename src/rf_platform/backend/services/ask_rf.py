@@ -39,6 +39,9 @@ _TIME_HINT_RE = re.compile(
 _TECH_5G_RE = re.compile(r"\b(5g|5g\s*nr|nr)\b", re.I)
 _LTE_RE = re.compile(r"\b(lte|4g)\b", re.I)
 _BLUETOOTH_RE = re.compile(r"\b(bluetooth|ble)\b", re.I)
+_PUNCTUATION_SPACE_RE = re.compile(r"\s+([?!.,;:])")
+_WHITESPACE_RE = re.compile(r"\s+")
+_HAPPEND_ALIAS_RE = re.compile(r"\bhappend\b")
 
 
 @dataclass(frozen=True)
@@ -100,8 +103,9 @@ async def answer_ask_rf(
     now: datetime | None = None,
 ) -> AskRFResponse:
     timezone = request.display_timezone or default_timezone
-    interval = _resolve_interval(request.question, timezone, request.prior_context, now)
-    intent = interpret_question(request.question)
+    normalized_question = normalize_question(request.question)
+    interval = _resolve_interval(normalized_question, timezone, request.prior_context, now)
+    intent = interpret_question(normalized_question)
     if intent.kind == "unsupported":
         return _unsupported_response(interval)
     if intent.kind == "time_period":
@@ -113,7 +117,7 @@ async def answer_ask_rf(
 
 
 def interpret_question(question: str) -> QuestionIntent:
-    text = question.strip().lower()
+    text = normalize_question(question)
     if not text:
         return QuestionIntent("unsupported")
     if "which time period" in text or "what time period" in text:
@@ -430,8 +434,8 @@ def human_label_list(labels: list[str]) -> str:
 def evidence_text(dataset: AskRFDataset, *, accepted_count: int) -> str:
     return (
         f"Used {accepted_count} accepted observation(s) from {dataset.real_capture_count} real "
-        f"hardware capture(s). Excluded {dataset.rejected_result_count} result(s) that were test "
-        "data, incomplete, unsuccessful, or internally inconsistent."
+        f"sensor collection(s). Set aside {dataset.rejected_result_count} stored result(s) that "
+        "were test data, incomplete, unsuccessful, or internally inconsistent."
     )
 
 
@@ -547,7 +551,8 @@ def _resolve_interval(
     prior_context: dict[str, Any] | None,
     now: datetime | None,
 ) -> InterpretedInterval:
-    if prior_context and not _TIME_HINT_RE.search(question):
+    normalized_question = normalize_question(question)
+    if prior_context and not _TIME_HINT_RE.search(normalized_question):
         try:
             return InterpretedInterval(
                 start_utc=ensure_utc(datetime.fromisoformat(str(prior_context["start_utc"]))),
@@ -557,7 +562,13 @@ def _resolve_interval(
             )
         except (KeyError, TypeError, ValueError):
             pass
-    return resolve_historical_interval(question, timezone, now)
+    return resolve_historical_interval(normalized_question, timezone, now)
+
+
+def normalize_question(question: str) -> str:
+    normalized = _PUNCTUATION_SPACE_RE.sub(r"\1", question.strip().lower())
+    normalized = _WHITESPACE_RE.sub(" ", normalized)
+    return _HAPPEND_ALIAS_RE.sub("happened", normalized)
 
 
 def _clock_label(value: datetime) -> str:
