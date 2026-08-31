@@ -47,6 +47,7 @@ def _interval() -> InterpretedInterval:
 def _record(
     *,
     labels: list[str] | None = None,
+    model_score: float | None = None,
     overall: str = "RF observation only.",
     flags: list[str] | None = None,
     coverage: tuple[int, int] = (2_430_000_000, 2_450_000_000),
@@ -65,7 +66,7 @@ def _record(
         technologies=[
             {
                 "label": label,
-                "model_score": None,
+                "model_score": model_score,
                 "observation": "RF-only observation.",
                 "evidence": ["capture_id:capture-1"],
             }
@@ -696,6 +697,46 @@ def test_profile_not_validated_answer_for_experimental_5g_coverage() -> None:
     assert "monitored part of this frequency range" in response.display_answer
     assert "No reliable 5G conclusion" in response.display_answer
     assert "profile" not in response.follow_up_context
+
+
+def test_experimental_lte_score_is_visible_but_not_called_probability() -> None:
+    dataset = AskRFDataset(
+        real_capture_count=12,
+        rejected_result_count=10,
+        accepted_records=[],
+        experimental_records=[
+            _record(
+                labels=["LTE"],
+                model_score=0.5,
+                coverage=(1_805_000_000, 1_825_000_000),
+            ),
+            _record(
+                labels=["4G"],
+                model_score=0.7,
+                coverage=(1_823_000_000, 1_843_000_000),
+            ),
+        ],
+        locations=[{"site": "campus", "room": "lab"}],
+        coverage_ranges_hz=[(1_805_000_000, 1_843_000_000)],
+        unvalidated_capture_count=2,
+        technology_coverage_counts={"5g": 0, "lte": 12, "bluetooth": 0, "wifi": 0},
+        technology_unvalidated_counts={"5g": 0, "lte": 12, "bluetooth": 0, "wifi": 0},
+        technology_presentation_counts={"5g": 0, "lte": 0, "bluetooth": 0, "wifi": 0},
+    )
+
+    response = build_answer(QuestionIntent("technology", "lte"), _interval(), dataset)
+
+    assert response.answer_status == "profile_not_validated"
+    assert "Experimental indication: LTE-like activity" in response.display_answer
+    assert "median model-reported score was 60%" in response.display_answer
+    assert "not a calibrated probability" in response.display_answer
+    assert "10 results did not pass consistency checks" in response.display_answer
+    assert "No reliable LTE conclusion" in response.display_answer
+
+
+def test_wifi_question_has_specific_deterministic_intent() -> None:
+    assert interpret_question("Any WiFi nearby?") == QuestionIntent("technology", "wifi")
+    assert interpret_question("Was WLAN observed?") == QuestionIntent("technology", "wifi")
 
 
 def test_operator_accepted_5g_no_signal_uses_5g_language() -> None:

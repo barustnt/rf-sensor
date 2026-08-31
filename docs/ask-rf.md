@@ -128,6 +128,7 @@ unless accepted observations exist for the monitored range.
 - Was LTE observed?
 - Was 5G observed?
 - Was 5G NR observed?
+- Was Wi-Fi observed?
 
 Follow-ups such as “Was it Bluetooth?” and “What about 5G?” reuse the previous interpreted time
 period in the current UI session. The New question action clears that session context. Conversation
@@ -137,13 +138,17 @@ history is not stored in PostgreSQL in this milestone.
 
 Ask RF uses the same trusted-data and band-consistency services as the worker and event correlation.
 It excludes simulated captures, mock/model-invalid runs, parser-invalid analyses, semantic
-contradictions, band-incompatible findings, and experimental profile technology claims from
-presentation conclusions. Operator-accepted or independently validated profiles may contribute to
-observation/no-signal logic, subject to coverage completeness and consistency checks.
+contradictions, and band-incompatible findings. Internally consistent findings from experimental
+profiles remain excluded from definitive presentation conclusions, but Ask RF may show a clearly
+labeled experimental indication. If those stored findings include model scores, Ask RF reports the
+median score and explicitly states that it is not a calibrated probability. Operator-accepted or
+independently validated profiles may contribute to observation/no-signal logic, subject to coverage
+completeness and consistency checks.
 
 For “What technologies are nearby?”, Ask RF lists only presentation-eligible accepted observations.
-It may state in plain language that additional ranges were monitored experimentally, but it does not
-show profile IDs, validation flags, model details, raw JSON, or UUIDs.
+It may state in plain language that additional ranges were monitored experimentally and summarize
+consistent experimental technology indications, but it does not show profile IDs, validation flags,
+model names, raw rejected output, raw JSON, or UUIDs.
 
 ## Limitations
 
