@@ -540,10 +540,31 @@ class B210SensorAdapter:
             raise B210InvalidSamplesError("B210 capture contains NaN or infinite samples")
 
     def _plan_for_profile(self, profile: CaptureProfile | None) -> B210RadioPlan:
-        sample_rate = self.settings.b210_sample_rate_sps or (
-            profile.radio.sample_rate_sps if profile else 1
-        )
-        sample_count = self.settings.b210_sample_count
+        exact_profile_capture = profile is not None and profile.capture.sample_count is not None
+        if exact_profile_capture and profile is not None:
+            sample_rate = profile.radio.sample_rate_sps
+            sample_count = profile.capture.sample_count
+            antenna = profile.radio.antenna
+            center_frequency_hz = profile.radio.center_frequency_hz
+            bandwidth_hz = profile.radio.bandwidth_hz
+            gain_db = profile.radio.gain_db
+        else:
+            sample_rate = self.settings.b210_sample_rate_sps or (
+                profile.radio.sample_rate_sps if profile else 1
+            )
+            sample_count = self.settings.b210_sample_count
+            antenna = self.settings.b210_antenna or (profile.radio.antenna if profile else None)
+            center_frequency_hz = self.settings.b210_center_frequency_hz or (
+                profile.radio.center_frequency_hz if profile else 1
+            )
+            bandwidth_hz = self.settings.b210_bandwidth_hz or (
+                profile.radio.bandwidth_hz if profile else 1
+            )
+            gain_db = (
+                self.settings.b210_gain_db
+                if self.settings.b210_gain_db is not None
+                else (profile.radio.gain_db if profile else None)
+            )
         if sample_count is None and profile is not None:
             sample_count = max(1, int(sample_rate * (profile.capture.duration_ms / 1000.0)))
         if sample_count is None:
@@ -556,15 +577,11 @@ class B210SensorAdapter:
             device_args=device_args,
             expected_serial=serial,
             rx_channel=self.settings.b210_rx_channel,
-            antenna=self.settings.b210_antenna or (profile.radio.antenna if profile else None),
-            center_frequency_hz=self.settings.b210_center_frequency_hz
-            or (profile.radio.center_frequency_hz if profile else 1),
+            antenna=antenna,
+            center_frequency_hz=center_frequency_hz,
             sample_rate_sps=sample_rate,
-            bandwidth_hz=self.settings.b210_bandwidth_hz
-            or (profile.radio.bandwidth_hz if profile else 1),
-            gain_db=self.settings.b210_gain_db
-            if self.settings.b210_gain_db is not None
-            else (profile.radio.gain_db if profile else None),
+            bandwidth_hz=bandwidth_hz,
+            gain_db=gain_db,
             sample_count=sample_count,
             receive_timeout_seconds=self.settings.b210_receive_timeout_seconds,
             settling_seconds=self.settings.b210_settling_seconds,

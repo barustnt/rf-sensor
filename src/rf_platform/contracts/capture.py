@@ -25,6 +25,7 @@ class RadioSettings(VersionedContract):
 class CaptureTiming(VersionedContract):
     duration_ms: int = Field(gt=0)
     interval_ms: int = Field(gt=0)
+    sample_count: int | None = Field(default=None, gt=0)
 
 
 class PreprocessingSettings(VersionedContract):

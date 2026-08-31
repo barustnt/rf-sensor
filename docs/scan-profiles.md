@@ -157,6 +157,11 @@ RF_SCAN_CYCLE_INTERVAL_SECONDS=0
 # RF_SCAN_MAX_SLICES_PER_CYCLE=3
 ```
 
+Run the API and sensor with the same `RF_SCAN_PROFILE_CONFIG`, `RF_SCAN_PROFILE_SET`, and
+`RF_SCAN_ENABLED_PROFILE_IDS` when you want the coverage endpoint to show the enabled planned
+profile and missing ranges for that scan. The sensor uses these values to decide what to capture;
+the API uses them to compute planned-vs-captured coverage.
+
 ## Coverage semantics
 
 Coverage is based on stored capture values, preferring actual UHD-returned center frequency and

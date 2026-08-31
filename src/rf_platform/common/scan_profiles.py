@@ -89,7 +89,9 @@ class ScanProfile:
                 gain_db=self.gain_db,
                 antenna=self.antenna,
             ),
-            capture=CaptureTiming(duration_ms=duration_ms, interval_ms=duration_ms),
+            capture=CaptureTiming(
+                duration_ms=duration_ms, interval_ms=duration_ms, sample_count=self.sample_count
+            ),
             preprocessing=PreprocessingProfile(
                 pipeline_version="atheer-hann-v1",
                 fft_size=512,

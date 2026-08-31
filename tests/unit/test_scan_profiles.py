@@ -301,3 +301,18 @@ def test_makefile_scan_plan_preserves_rf_scan_environment() -> None:
     assert payload["warnings"] == [
         "Planned 2 of 5 slices; this plan does not provide complete profile coverage."
     ]
+
+
+def test_scan_slice_and_capture_profile_preserve_exact_sample_count() -> None:
+    profile_set = load_scan_profile_set(CATALOGUE)
+    plan = build_scan_plan(
+        profile_set,
+        enabled_profile_ids="uae_shared_2400_2483_5",
+        max_slices=1,
+    )
+    scan_slice = plan.slices[0]
+    capture_profile = scan_slice.to_capture_profile(profile_set)
+
+    assert scan_slice.sample_count == 1_048_576
+    assert capture_profile.capture.sample_count == 1_048_576
+    assert capture_profile.capture.duration_ms == 53

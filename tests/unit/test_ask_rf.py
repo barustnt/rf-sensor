@@ -22,6 +22,7 @@ from rf_platform.backend.services.ask_rf import (
     QuestionIntent,
     _not_monitored_response,
     _resolve_interval,
+    _successful_technical_only_experimental_result,
     answer_ask_rf,
     build_answer,
     interpret_question,
@@ -29,6 +30,7 @@ from rf_platform.backend.services.ask_rf import (
     presentation_record_from_run,
 )
 from rf_platform.common.config import Settings
+from rf_platform.common.scan_profiles import load_scan_profile_set
 from rf_platform.common.time import InterpretedInterval
 from rf_platform.contracts.api import AskRFRequest, AskRFResponse, QueryInterval
 
@@ -727,3 +729,121 @@ def test_5g_without_scan_coverage_remains_not_monitored() -> None:
 
     assert response.answer_status == "not_monitored"
     assert "did not monitor" in response.display_answer
+
+
+def _mixed_experimental_rejected_dataset() -> AskRFDataset:
+    return AskRFDataset(
+        real_capture_count=2,
+        rejected_result_count=1,
+        accepted_records=[],
+        locations=[{"site": "campus", "room": "lab"}],
+        coverage_ranges_hz=[(2_400_000_000, 2_420_000_000), (2_418_000_000, 2_438_000_000)],
+        unvalidated_capture_count=1,
+        technology_coverage_counts={"bluetooth": 2, "wifi": 2, "lte": 0, "5g": 0},
+        technology_unvalidated_counts={"bluetooth": 2, "wifi": 2, "lte": 0, "5g": 0},
+        technology_presentation_counts={"bluetooth": 0, "wifi": 0, "lte": 0, "5g": 0},
+    )
+
+
+def test_mixed_experimental_success_and_semantic_rejection_are_accounted_for_plainly() -> None:
+    response = build_answer(
+        QuestionIntent("summary"),
+        _interval(),
+        _mixed_experimental_rejected_dataset(),
+    )
+    display = " ".join(
+        [response.display_answer, response.evidence_explanation, *response.limitations]
+    ).lower()
+
+    assert response.answer_status == "partial_data"
+    assert "monitored profile remains experimental" in response.display_answer
+    assert "one result did not pass consistency checks" in response.display_answer
+    assert (
+        "Kept one successful experimental technical-review result" in response.evidence_explanation
+    )
+    assert "One result did not pass consistency checks" in response.evidence_explanation
+    for forbidden in [
+        "parser",
+        "deadletter",
+        "job",
+        "model",
+        "uuid",
+        "database",
+        "mock-v1",
+        "capture_id",
+    ]:
+        assert forbidden not in display
+
+
+def test_bluetooth_query_with_only_experimental_and_rejected_data_stays_cautious() -> None:
+    response = build_answer(
+        QuestionIntent("technology", "bluetooth"),
+        _interval(),
+        _mixed_experimental_rejected_dataset(),
+    )
+
+    assert response.answer_status == "partial_data"
+    assert "Bluetooth was not confirmed" not in response.display_answer
+    assert "observed Bluetooth" not in response.display_answer
+    assert "No reliable conclusion" in response.display_answer
+
+
+@pytest.mark.parametrize("technology", ["lte", "5g"])
+def test_lte_and_5g_not_monitored_when_only_2g4_was_captured(technology: str) -> None:
+    response = build_answer(
+        QuestionIntent("technology", technology),
+        _interval(),
+        _mixed_experimental_rejected_dataset(),
+    )
+
+    assert response.answer_status == "not_monitored"
+    assert "did not monitor" in response.display_answer
+
+
+def test_trusted_presentation_eligible_no_signal_behavior_unchanged() -> None:
+    response = build_answer(
+        QuestionIntent("summary"),
+        _interval(),
+        _dataset(records=[_record(overall="No signals present.")]),
+    )
+
+    assert response.answer_status == "no_signal"
+    assert "No signal or wireless technology was confirmed" in response.display_answer
+
+
+def test_experimental_success_is_distinguished_from_semantic_rejection_in_accounting() -> None:
+    profile_set = load_scan_profile_set(Path("config/scan-profiles/uae-b210-sub6-v1.toml"))
+    capture = SimpleNamespace(
+        capture_id="capture-experimental",
+        sensor_id="laptop-b210-001",
+        profile_id="uae_shared_2400_2483_5",
+        started_at_utc=_interval().start_utc,
+        ended_at_utc=_interval().end_utc,
+        radio={
+            "center_frequency_hz": 2_410_000_000,
+            "bandwidth_hz": 20_000_000,
+            "hardware": {
+                "actual_center_frequency_hz": 2_410_000_000,
+                "actual_bandwidth_hz": 20_000_000,
+            },
+        },
+    )
+    successful = _run_payload(
+        structured={
+            "technologies": [],
+            "signals": [],
+            "overall_assessment": "No signals present.",
+            "quality_flags": [],
+        }
+    )
+
+    assert _successful_technical_only_experimental_result(
+        successful, cast(Any, capture), _sensor(), _job(), profile_set
+    )
+    assert not _successful_technical_only_experimental_result(
+        successful,
+        cast(Any, capture),
+        _sensor(),
+        _job(status="deadletter", error_category="semantic_inconsistency"),
+        profile_set,
+    )

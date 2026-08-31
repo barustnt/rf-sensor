@@ -12,6 +12,7 @@ import respx
 from PIL import Image
 
 from rf_platform.common.config import Settings
+from rf_platform.common.scan_profiles import build_scan_plan, load_scan_profile_set
 from rf_platform.preprocessing import atheer_hann
 from rf_platform.sensor_agent.adapters.b210 import (
     B210ActualRadio,
@@ -377,3 +378,52 @@ async def test_spool_upload_and_restart_recovery_use_b210_capture(tmp_path: Path
     assert uploads[0]["capture_id"] == item.envelope.capture_id
     assert route.called
     assert DurableSpool(settings.spool_root, settings.spool_max_bytes).pending_items() == []
+
+
+def test_b210_plan_prefers_explicit_scan_profile_sample_count_and_keeps_non_scan_override(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path, b210_sample_count=1_060_000)
+    adapter = B210SensorAdapter(settings, uhd_device=FakeB210Device(_samples(1_048_576)))
+    profile_set = load_scan_profile_set(Path("config/scan-profiles/uae-b210-sub6-v1.toml"))
+    scan_profile = (
+        build_scan_plan(profile_set, enabled_profile_ids="uae_shared_2400_2483_5", max_slices=1)
+        .slices[0]
+        .to_capture_profile(profile_set)
+    )
+
+    scan_plan = adapter._plan_for_profile(scan_profile)
+    non_scan_plan = adapter._plan_for_profile(_profile())
+
+    assert scan_profile.capture.sample_count == 1_048_576
+    assert scan_plan.center_frequency_hz == 2_410_000_000
+    assert scan_plan.sample_rate_sps == 20_000_000
+    assert scan_plan.bandwidth_hz == 20_000_000
+    assert scan_plan.sample_count == 1_048_576
+    assert non_scan_plan.center_frequency_hz == 2_440_000_000
+    assert non_scan_plan.sample_count == 1_060_000
+
+
+@pytest.mark.asyncio
+async def test_b210_capture_operation_uses_scan_slice_sample_count_despite_global_override(
+    tmp_path: Path,
+) -> None:
+    profile_set = load_scan_profile_set(Path("config/scan-profiles/uae-b210-sub6-v1.toml"))
+    scan_profile = (
+        build_scan_plan(profile_set, enabled_profile_ids="uae_shared_2400_2483_5", max_slices=1)
+        .slices[0]
+        .to_capture_profile(profile_set)
+    )
+    fake = FakeB210Device(_samples(1_048_576), chunk_sizes=[65_536, 65_536, 1_048_576])
+    adapter = B210SensorAdapter(
+        _settings(tmp_path, b210_sample_count=1_060_000),
+        uhd_device=fake,
+    )
+
+    bundle = await adapter.capture(CaptureRequest(profile=scan_profile))
+
+    assert fake.plan.center_frequency_hz == 2_410_000_000
+    assert fake.plan.sample_count == 1_048_576
+    assert fake.started_sample_count == 1_048_576
+    assert bundle.envelope.radio.hardware["requested_sample_count"] == 1_048_576
+    assert bundle.envelope.radio.hardware["received_sample_count"] == 1_048_576

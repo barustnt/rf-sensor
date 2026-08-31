@@ -221,3 +221,16 @@ def test_scanner_refuses_non_b210_adapter() -> None:
         B210ScanRunner(
             _settings(sensor_adapter="simulated"), service=cast(Any, _FakeService()), plan=_plan(1)
         )
+
+
+@pytest.mark.asyncio
+async def test_scanner_passes_dry_run_slice_sample_count_to_capture_profile() -> None:
+    service = _FakeService()
+    plan = _plan(1)
+    runner = B210ScanRunner(_settings(), service=cast(Any, service), plan=plan)
+
+    await runner.run(one_cycle=True)
+
+    assert plan.slices[0].sample_count == 1_048_576
+    assert service.capture_profiles[0].capture.sample_count == plan.slices[0].sample_count
+    assert service.capture_profiles[0].capture.duration_ms == 53

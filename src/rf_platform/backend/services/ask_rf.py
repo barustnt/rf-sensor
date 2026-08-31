@@ -15,6 +15,8 @@ from rf_platform.backend.services.coverage import (
     capture_frequency_range,
 )
 from rf_platform.common.band_compatibility import (
+    BAND_INCOMPATIBLE,
+    check_findings_band_compatibility,
     profile_matches_technology,
     profile_presentation_eligible,
     scan_profile_for_capture,
@@ -310,9 +312,8 @@ async def load_presentation_dataset(
         for run, capture, sensor, job in run_result.all():
             record = presentation_record_from_run(run, capture, sensor, job, profile_set)
             if record is None:
-                profile = scan_profile_for_capture(profile_set, capture.profile_id)
-                if profile is not None and not profile_presentation_eligible(
-                    profile, capture.profile_id
+                if _successful_technical_only_experimental_result(
+                    run, capture, sensor, job, profile_set
                 ):
                     unvalidated_count += 1
                 else:
@@ -476,11 +477,24 @@ def human_label_list(labels: list[str]) -> str:
 
 
 def evidence_text(dataset: AskRFDataset, *, accepted_count: int) -> str:
-    return (
-        f"Used {accepted_count} accepted observation(s) from {dataset.real_capture_count} real "
-        f"sensor collection(s). Set aside {dataset.rejected_result_count} stored result(s) that "
-        "were test data, incomplete, unsuccessful, or internally inconsistent."
-    )
+    parts = [
+        f"Used {accepted_count} accepted presentation observation(s) from "
+        f"{dataset.real_capture_count} real sensor collection(s)."
+    ]
+    if dataset.unvalidated_capture_count:
+        experimental_count = _count_phrase(
+            dataset.unvalidated_capture_count,
+            "successful experimental technical-review result",
+        )
+        parts.append(f"Kept {experimental_count} out of presentation conclusions.")
+    if dataset.rejected_result_count:
+        parts.append(
+            f"{_count_phrase(dataset.rejected_result_count, 'result').capitalize()} did not "
+            "pass consistency checks."
+        )
+    if not dataset.unvalidated_capture_count and not dataset.rejected_result_count:
+        parts.append("No stored result was set aside by presentation filtering.")
+    return " ".join(parts)
 
 
 def _profile_not_validated_response(
@@ -519,12 +533,27 @@ def _partial_response(
     limitations: list[str],
     dataset: AskRFDataset,
 ) -> AskRFResponse:
-    return _response(
-        "partial_data",
-        (
+    reasons = []
+    if dataset.unvalidated_capture_count:
+        reasons.append("the monitored profile remains experimental")
+    if dataset.rejected_result_count:
+        reasons.append(
+            f"{_count_phrase(dataset.rejected_result_count, 'result')} did not pass "
+            "consistency checks"
+        )
+    if reasons:
+        answer = (
+            "The system collected observations for this period, but "
+            f"{_join_reasons(reasons)}. No reliable conclusion can be provided."
+        )
+    else:
+        answer = (
             "The system collected observations for this period, but some results did not pass "
             "consistency checks. No reliable conclusion can be provided."
-        ),
+        )
+    return _response(
+        "partial_data",
+        answer,
         interval,
         time_label,
         location_label,
@@ -656,6 +685,62 @@ def _list_of_dicts(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
+
+
+def _successful_technical_only_experimental_result(
+    run: models.ModelRun,
+    capture: models.Capture,
+    sensor: models.Sensor,
+    job: models.AnalysisJob,
+    profile_set: ScanProfileSet | None,
+) -> bool:
+    profile = scan_profile_for_capture(profile_set, capture.profile_id)
+    if profile is None or profile_presentation_eligible(profile, capture.profile_id):
+        return False
+    if sensor.adapter == "simulated":
+        return False
+    if run.adapter == "mock" or run.model_version == "mock-v1":
+        return False
+    if run.status != "succeeded" or not run.parser_valid:
+        return False
+    if job.status in {"failed", "deadletter"}:
+        return False
+    if job.error_category in {
+        "model_configuration_mismatch",
+        SEMANTIC_INCONSISTENCY,
+        BAND_INCOMPATIBLE,
+    }:
+        return False
+    structured = run.structured_result if isinstance(run.structured_result, dict) else {}
+    technologies = _list_of_dicts(structured.get("technologies"))
+    signals = _list_of_dicts(structured.get("signals"))
+    overall = str(structured.get("overall_assessment") or "")
+    quality_flags = [
+        str(item) for item in structured.get("quality_flags", []) if isinstance(item, str)
+    ]
+    if SEMANTIC_INCONSISTENCY in quality_flags or BAND_INCOMPATIBLE in quality_flags:
+        return False
+    if (technologies or signals) and has_no_signal_marker(overall, quality_flags):
+        return False
+    compatibility = check_findings_band_compatibility(
+        technologies=technologies,
+        signals=signals,
+        frequency_range_hz=capture_frequency_range(capture, profile_set),
+        profile_id=capture.profile_id,
+    )
+    return not compatibility.incompatible
+
+
+def _count_phrase(count: int, noun: str) -> str:
+    if count == 1:
+        return f"one {noun}"
+    return f"{count} {noun}s"
+
+
+def _join_reasons(reasons: list[str]) -> str:
+    if len(reasons) <= 1:
+        return reasons[0] if reasons else "stored observations need further review"
+    return ", ".join(reasons[:-1]) + f", and {reasons[-1]}"
 
 
 def _load_scan_profiles(settings: Settings | None) -> ScanProfileSet | None:
