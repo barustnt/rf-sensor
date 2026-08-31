@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    labels:
+      rf.platform.role: acceptance-test
+    environment:
+      POSTGRES_USER: ${RF_POSTGRES_USER:-rf_platform}
+      POSTGRES_PASSWORD: ${RF_POSTGRES_PASSWORD:-change-me}
+      POSTGRES_DB: ${RF_POSTGRES_DB:-rf_platform}
+    ports:
+      - "127.0.0.1::5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  nats:
+    image: nats:2.10-alpine
+    labels:
+      rf.platform.role: acceptance-test
+    command: ["-c", "/etc/nats/nats-server.conf"]
+    ports:
+      - "127.0.0.1::4222"
+    volumes:
+      - ./nats/nats-server.conf:/etc/nats/nats-server.conf:ro
+      - nats_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8222/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  postgres_data:
+  nats_data:

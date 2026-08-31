@@ -44,6 +44,9 @@ make infra-down
 `make demo` runs the Milestone 1 simulated acceptance flow and stops before real hardware or
 real RF-GPT work. `scripts/run_milestone2_acceptance.py` exercises the Milestone 2 operational
 dashboard and reliability acceptance flow, including disposable backup/restore verification.
+Docker-backed acceptance tests use a unique `rf-sensor-test-*` Compose project, dynamic localhost
+ports, and test-only volumes; guarded cleanup may use `down -v` only for that ephemeral project and
+never for the operational `rf-sensor` project or `rf-sensor_rf_postgres_data` volume.
 
 ## Runtime boundaries
 

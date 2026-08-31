@@ -18,6 +18,20 @@ sensor tokens, database credentials, retry controls, alert controls, UUIDs, mode
 raw JSON, logs, or spectrograms. It does not call vLLM, RF-GPT, the B210, or any sensor while
 answering historical questions. See `docs/ask-rf.md`.
 
+
+## Test infrastructure isolation
+
+`make check` includes Docker-backed simulated acceptance tests. Those tests must not share the
+operational Compose project, fixed operational container names, host ports, or PostgreSQL volume.
+They start an ephemeral Compose project named `rf-sensor-test-<suffix>` from
+`deploy/docker-compose.acceptance.yml`, publish PostgreSQL and NATS on dynamic loopback ports, and
+point the API/worker/sensor test environment at those mapped ports. Test cleanup is fail-closed:
+`down -v --remove-orphans` is allowed only after the project name validates as `rf-sensor-test-*`;
+cleanup is refused for an empty name or the operational `rf-sensor` project.
+
+Operational data lives under the normal `rf-sensor` Compose project and `rf-sensor_rf_postgres_data`
+volume. Do not run destructive acceptance cleanup commands against that project.
+
 ## Milestone 2 operator actions
 
 - Dashboard list views are bounded by filters plus `limit`/`offset`; avoid unbounded time ranges

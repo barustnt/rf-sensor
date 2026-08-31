@@ -19,6 +19,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from acceptance_infra import cleanup_isolated_infra, start_isolated_infra  # noqa: E402
 from rf_platform.common.config import get_settings, reset_settings_cache  # noqa: E402
 from rf_platform.dashboard.api_client import DashboardApiClient  # noqa: E402
 from rf_platform.sensor_agent.service import SensorService  # noqa: E402
@@ -46,8 +47,11 @@ def _base_env(api_port: int, token: str) -> dict[str, str]:
             "RF_DASHBOARD_HOST": "localhost",
             "RF_DASHBOARD_PORT": "7860",
             "RF_GRADIO_SHARE": "false",
-            "RF_DATABASE_URL": "postgresql+asyncpg://rf_platform:change-me@localhost:5432/rf_platform",
-            "RF_NATS_URL": "nats://localhost:4222",
+            "RF_DATABASE_URL": "postgresql+asyncpg://rf_platform:change-me@127.0.0.1:5432/rf_platform",
+            "RF_NATS_URL": "nats://127.0.0.1:4222",
+            "RF_POSTGRES_USER": "rf_platform",
+            "RF_POSTGRES_PASSWORD": "change-me",
+            "RF_POSTGRES_DB": "rf_platform",
             "RF_ARTIFACT_BACKEND": "filesystem",
             "RF_ARTIFACT_ROOT": str(ROOT / ".data" / "demo" / "artifacts"),
             "RF_SPOOL_ROOT": str(ROOT / ".data" / "demo" / "spool"),
@@ -170,48 +174,19 @@ def main() -> None:
     token = secrets.token_urlsafe(24)
     api_port = _free_port()
     env = _base_env(api_port, token)
-    os.environ.update(env)
-    reset_settings_cache()
-
     demo_root = ROOT / ".data" / "demo"
     shutil.rmtree(demo_root, ignore_errors=True)
     demo_root.mkdir(parents=True, exist_ok=True)
 
-    _run(
-        [
-            "docker",
-            "compose",
-            "-f",
-            "deploy/docker-compose.infra.yml",
-            "--project-name",
-            "rf-sensor",
-            "down",
-            "-v",
-            "--remove-orphans",
-        ],
-        env,
-        timeout=120,
-    )
-    _run(
-        [
-            "docker",
-            "compose",
-            "-f",
-            "deploy/docker-compose.infra.yml",
-            "--project-name",
-            "rf-sensor",
-            "up",
-            "-d",
-            "--wait",
-        ],
-        env,
-        timeout=180,
-    )
-    _run([sys.executable, "-m", "alembic", "upgrade", "head"], env, timeout=120)
-    _run([sys.executable, "scripts/seed_demo.py"], env, timeout=60)
-
-    api_proc = _start_api(env, api_port)
+    infra = start_isolated_infra(env)
+    api_proc: subprocess.Popen[str] | None = None
     try:
+        os.environ.update(env)
+        reset_settings_cache()
+        _run([sys.executable, "-m", "alembic", "upgrade", "head"], env, timeout=120)
+        _run([sys.executable, "scripts/seed_demo.py"], env, timeout=60)
+
+        api_proc = _start_api(env, api_port)
         _wait_ready(env["RF_PLATFORM_URL"])
 
         first = asyncio.run(_sensor_cycle(keep_spool=True))
@@ -309,7 +284,9 @@ def main() -> None:
         )
         print("SIMULATED END-TO-END ACCEPTANCE PASSED", flush=True)
     finally:
-        _stop_process(api_proc)
+        if api_proc is not None:
+            _stop_process(api_proc)
+        cleanup_isolated_infra(infra.project_name, env)
 
 
 if __name__ == "__main__":

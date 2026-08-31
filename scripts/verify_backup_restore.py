@@ -9,13 +9,15 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+COMPOSE_FILE = os.environ.get("RF_ACCEPTANCE_COMPOSE_FILE", "deploy/docker-compose.infra.yml")
+COMPOSE_PROJECT = os.environ.get("RF_ACCEPTANCE_COMPOSE_PROJECT", "rf-sensor")
 COMPOSE = [
     "docker",
     "compose",
     "-f",
-    "deploy/docker-compose.infra.yml",
+    COMPOSE_FILE,
     "--project-name",
-    "rf-sensor",
+    COMPOSE_PROJECT,
 ]
 RESTORE_DB = "rf_platform_restore_check"
 DB_DUMP_PATH = "/tmp/rf_platform_m2_restore_check.dump"

@@ -229,48 +229,21 @@ def main() -> None:
     token = secrets.token_urlsafe(24)
     api_port = _free_port()
     env = _base_env(api_port, token)
-    os.environ.update(env)
-    reset_settings_cache()
-
     demo_root = ROOT / ".data" / "demo"
     shutil.rmtree(demo_root, ignore_errors=True)
     demo_root.mkdir(parents=True, exist_ok=True)
 
-    _run(
-        [
-            "docker",
-            "compose",
-            "-f",
-            "deploy/docker-compose.infra.yml",
-            "--project-name",
-            "rf-sensor",
-            "down",
-            "-v",
-            "--remove-orphans",
-        ],
-        env,
-        timeout=120,
-    )
-    _run(
-        [
-            "docker",
-            "compose",
-            "-f",
-            "deploy/docker-compose.infra.yml",
-            "--project-name",
-            "rf-sensor",
-            "up",
-            "-d",
-            "--wait",
-        ],
-        env,
-        timeout=180,
-    )
-    _run([sys.executable, "-m", "alembic", "upgrade", "head"], env, timeout=120)
-    _run([sys.executable, "scripts/seed_demo.py"], env, timeout=60)
+    from acceptance_infra import cleanup_isolated_infra, start_isolated_infra
 
-    api_proc = _start_api(env, api_port)
+    infra = start_isolated_infra(env)
+    api_proc = None
     try:
+        os.environ.update(env)
+        reset_settings_cache()
+        _run([sys.executable, "-m", "alembic", "upgrade", "head"], env, timeout=120)
+        _run([sys.executable, "scripts/seed_demo.py"], env, timeout=60)
+
+        api_proc = _start_api(env, api_port)
         _wait_ready(env["RF_PLATFORM_URL"])
         client = DashboardApiClient(get_settings())
 
@@ -405,7 +378,9 @@ def main() -> None:
         _run([sys.executable, "scripts/verify_backup_restore.py"], env, timeout=300)
         print("MILESTONE 2 ACCEPTANCE PASSED", flush=True)
     finally:
-        _stop_process(api_proc)
+        if api_proc is not None:
+            _stop_process(api_proc)
+        cleanup_isolated_infra(infra.project_name, env)
         time.sleep(0.5)
 
 
