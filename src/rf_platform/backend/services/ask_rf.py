@@ -167,7 +167,11 @@ def build_answer(
     limitations = list(DEFAULT_LIMITATIONS)
     if interval.assumptions:
         limitations.extend(interval.assumptions)
-    coverage = coverage_summary(dataset.coverage_ranges_hz)
+    coverage = (
+        coverage_summary(dataset.coverage_ranges_hz)
+        if intent.kind == "summary" or intent.technology == "bluetooth"
+        else None
+    )
     if coverage:
         limitations.append(coverage)
 

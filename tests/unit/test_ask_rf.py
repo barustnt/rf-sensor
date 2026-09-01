@@ -739,6 +739,25 @@ def test_wifi_question_has_specific_deterministic_intent() -> None:
     assert interpret_question("Was WLAN observed?") == QuestionIntent("technology", "wifi")
 
 
+def test_wifi_answer_omits_bluetooth_specific_coverage_limitation() -> None:
+    dataset = AskRFDataset(
+        real_capture_count=1,
+        rejected_result_count=1,
+        accepted_records=[],
+        locations=[{"site": "campus"}],
+        coverage_ranges_hz=[(2_400_000_000, 2_420_000_000)],
+        unvalidated_capture_count=1,
+        technology_coverage_counts={"5g": 0, "lte": 0, "bluetooth": 1, "wifi": 1},
+        technology_unvalidated_counts={"5g": 0, "lte": 0, "bluetooth": 1, "wifi": 1},
+        technology_presentation_counts={"5g": 0, "lte": 0, "bluetooth": 0, "wifi": 0},
+    )
+
+    response = build_answer(QuestionIntent("technology", "wifi"), _interval(), dataset)
+
+    assert response.answer_status == "profile_not_validated"
+    assert all("Bluetooth" not in limitation for limitation in response.limitations)
+
+
 def test_operator_accepted_5g_no_signal_uses_5g_language() -> None:
     dataset = AskRFDataset(
         real_capture_count=1,
