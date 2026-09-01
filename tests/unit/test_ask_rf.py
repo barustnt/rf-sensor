@@ -698,7 +698,7 @@ def test_profile_not_validated_answer_for_experimental_5g_coverage() -> None:
     assert "profile" not in response.follow_up_context
 
 
-def test_experimental_lte_score_is_visible_but_not_called_probability() -> None:
+def test_experimental_lte_score_is_not_shown_in_public_answer() -> None:
     dataset = AskRFDataset(
         real_capture_count=12,
         rejected_result_count=10,
@@ -727,8 +727,9 @@ def test_experimental_lte_score_is_visible_but_not_called_probability() -> None:
 
     assert response.answer_status == "profile_not_validated"
     assert "Preliminary RF-GPT candidate: possible LTE-like activity" in response.display_answer
-    assert "raw median model score was 0.60/1.00" in response.display_answer
-    assert "must not be interpreted as a 60% probability" in response.display_answer
+    assert "0.60" not in response.display_answer
+    assert "score" not in response.display_answer.lower()
+    assert "probability" not in response.display_answer.lower()
     assert "consistency checks" not in response.display_answer
     assert "10 results did not pass consistency checks" in response.evidence_explanation
 
@@ -761,7 +762,9 @@ def test_experimental_summary_lists_each_consistent_known_technology() -> None:
     assert "Wi-Fi-like activity in one internally consistent experimental analysis" in (
         response.display_answer
     )
-    assert "raw median score 0.98/1.00, uncalibrated" in response.display_answer
+    assert "0.98" not in response.display_answer
+    assert "score" not in response.display_answer.lower()
+    assert "uncalibrated" not in response.display_answer.lower()
     assert "not confirmed technology detections" not in response.display_answer
     assert "remaining limitation" not in response.display_answer
 

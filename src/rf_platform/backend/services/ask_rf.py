@@ -3,8 +3,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from math import isfinite
-from statistics import median
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -851,11 +849,6 @@ def _experimental_finding_text(records: list[AskRFRecord], intent: QuestionInten
             f"{_technology_display_label(technology)}-like activity was reported in "
             f"{_experimental_analysis_count(len(findings))}."
         )
-        if (score := _median_model_score(findings)) is not None:
-            text += (
-                f" The raw median model score was {score:.2f}/1.00; it is uncalibrated and "
-                f"must not be interpreted as a {round(score * 100)}% probability."
-            )
         return text
 
     clauses = []
@@ -864,27 +857,12 @@ def _experimental_finding_text(records: list[AskRFRecord], intent: QuestionInten
             f"{_technology_display_label(technology)}-like activity in "
             f"{_experimental_analysis_count(len(findings))}"
         )
-        if (score := _median_model_score(findings)) is not None:
-            clause += f" (raw median score {score:.2f}/1.00, uncalibrated)"
         clauses.append(clause)
     return (
         "Preliminary RF-GPT candidates: "
         + "; ".join(clauses)
         + "."
     )
-
-
-def _median_model_score(findings: list[dict[str, Any]]) -> float | None:
-    scores = [
-        float(score)
-        for finding in findings
-        if (score := finding.get("model_score")) is not None
-        and not isinstance(score, bool)
-        and isinstance(score, (int, float))
-        and isfinite(float(score))
-        and 0 <= float(score) <= 1
-    ]
-    return median(scores) if scores else None
 
 
 def _experimental_analysis_count(count: int) -> str:
