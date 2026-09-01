@@ -593,30 +593,14 @@ def _profile_not_validated_response(
     dataset: AskRFDataset,
 ) -> AskRFResponse:
     label = _technology_display_label(technology)
-    rejected_result_count = dataset.technology_rejected_result_counts.get(
-        technology, dataset.rejected_result_count
-    )
     experimental_text = _experimental_finding_text(
         dataset.experimental_records, QuestionIntent("technology", technology)
     )
-    rejection_text = ""
-    if rejected_result_count:
-        rejection_text = (
-            f" {_count_phrase(rejected_result_count, 'result').capitalize()} from the relevant "
-            "scan profiles failed consistency checks."
-        )
     if experimental_text:
-        answer = (
-            f"{experimental_text}{rejection_text} The scan profile is not yet validated, so "
-            f"treat this as a preliminary technical observation rather than confirmed {label} "
-            "presence."
-        )
+        answer = experimental_text
     else:
         answer = (
-            f"RF-GPT did not produce an internally consistent {label} candidate during "
-            f"{time_label}. The relevant frequency range was monitored with experimental scan "
-            f"profiles.{rejection_text} This means {label} was not established by this test; it "
-            f"does not show that {label} was absent."
+            f"No internally consistent {label} candidate was reported during {time_label}."
         )
     return _response(
         "profile_not_validated",
@@ -656,36 +640,20 @@ def _partial_response(
         rejected_result_count = dataset.technology_rejected_result_counts.get(
             intent.technology, rejected_result_count
         )
-    reasons = []
-    if unvalidated_count:
-        reasons.append("the monitored profile remains experimental")
-    if rejected_result_count:
-        reasons.append(
-            f"{_count_phrase(rejected_result_count, 'result')} did not pass "
-            "consistency checks"
-        )
-    if reasons:
-        reason_text = _join_reasons(reasons)
-    else:
-        reason_text = "the available observations need further technical review"
+    has_filtered_results = bool(unvalidated_count or rejected_result_count)
     experimental_text = _experimental_finding_text(
         dataset.experimental_records, intent or QuestionIntent("summary")
     )
     if experimental_text:
-        answer = (
-            f"{experimental_text} The remaining limitation is that {reason_text}. Treat these "
-            "as preliminary technical observations rather than confirmed detections."
-        )
-    elif not reasons:
+        answer = experimental_text
+    elif not has_filtered_results:
         answer = (
             "The system collected conflicting internally consistent observations for this "
             "period. No reliable conclusion can be provided without further review."
         )
     else:
         answer = (
-            "RF-GPT did not produce an internally consistent candidate technology for this "
-            f"period. The system collected observations, but {reason_text}. This does not show "
-            "that monitored technologies were absent."
+            "No internally consistent candidate technology was reported for this period."
         )
     return _response(
         "partial_data",
@@ -902,7 +870,7 @@ def _experimental_finding_text(records: list[AskRFRecord], intent: QuestionInten
     return (
         "Preliminary RF-GPT candidates: "
         + "; ".join(clauses)
-        + ". These are model candidates, not confirmed technology detections."
+        + "."
     )
 
 
@@ -959,12 +927,6 @@ def _count_phrase(count: int, noun: str) -> str:
     if count == 1:
         return f"one {noun}"
     return f"{count} {noun}s"
-
-
-def _join_reasons(reasons: list[str]) -> str:
-    if len(reasons) <= 1:
-        return reasons[0] if reasons else "stored observations need further review"
-    return ", ".join(reasons[:-1]) + f", and {reasons[-1]}"
 
 
 def _load_scan_profiles(settings: Settings | None) -> ScanProfileSet | None:

@@ -694,8 +694,7 @@ def test_profile_not_validated_answer_for_experimental_5g_coverage() -> None:
     response = build_answer(QuestionIntent("technology", "5g"), _interval(), dataset)
 
     assert response.answer_status == "profile_not_validated"
-    assert "did not produce an internally consistent 5G candidate" in response.display_answer
-    assert "does not show that 5G was absent" in response.display_answer
+    assert "No internally consistent 5G candidate was reported" in response.display_answer
     assert "profile" not in response.follow_up_context
 
 
@@ -730,8 +729,8 @@ def test_experimental_lte_score_is_visible_but_not_called_probability() -> None:
     assert "Preliminary RF-GPT candidate: possible LTE-like activity" in response.display_answer
     assert "raw median model score was 0.60/1.00" in response.display_answer
     assert "must not be interpreted as a 60% probability" in response.display_answer
-    assert "10 results from the relevant scan profiles failed" in response.display_answer
-    assert "rather than confirmed LTE presence" in response.display_answer
+    assert "consistency checks" not in response.display_answer
+    assert "10 results did not pass consistency checks" in response.evidence_explanation
 
 
 def test_experimental_summary_lists_each_consistent_known_technology() -> None:
@@ -763,7 +762,8 @@ def test_experimental_summary_lists_each_consistent_known_technology() -> None:
         response.display_answer
     )
     assert "raw median score 0.98/1.00, uncalibrated" in response.display_answer
-    assert "not confirmed technology detections" in response.display_answer
+    assert "not confirmed technology detections" not in response.display_answer
+    assert "remaining limitation" not in response.display_answer
 
 
 def test_wifi_question_has_specific_deterministic_intent() -> None:
@@ -808,8 +808,9 @@ def test_wifi_answer_reports_only_wifi_profile_accounting() -> None:
     response = build_answer(QuestionIntent("technology", "wifi"), _interval(), dataset)
 
     assert response.answer_status == "profile_not_validated"
-    assert "2 results did not pass consistency checks" in response.display_answer
+    assert "consistency checks" not in response.display_answer
     assert "25 results" not in response.display_answer
+    assert "2 results did not pass consistency checks" in response.evidence_explanation
     assert "from 6 relevant real sensor collection(s)" in response.evidence_explanation
     assert "Kept 4 successful experimental technical-review results" in (
         response.evidence_explanation
@@ -874,8 +875,9 @@ def test_mixed_experimental_success_and_semantic_rejection_are_accounted_for_pla
     ).lower()
 
     assert response.answer_status == "partial_data"
-    assert "monitored profile remains experimental" in response.display_answer
-    assert "one result did not pass consistency checks" in response.display_answer
+    assert response.display_answer == (
+        "No internally consistent candidate technology was reported for this period."
+    )
     assert (
         "Kept one successful experimental technical-review result" in response.evidence_explanation
     )
@@ -901,10 +903,9 @@ def test_bluetooth_query_with_only_experimental_and_rejected_data_stays_cautious
     )
 
     assert response.answer_status == "profile_not_validated"
-    assert "did not produce an internally consistent Bluetooth/BLE candidate" in (
+    assert "No internally consistent Bluetooth/BLE candidate was reported" in (
         response.display_answer
     )
-    assert "does not show that Bluetooth/BLE was absent" in response.display_answer
 
 
 @pytest.mark.parametrize("technology", ["lte", "5g"])
