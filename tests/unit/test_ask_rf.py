@@ -758,6 +758,32 @@ def test_wifi_answer_omits_bluetooth_specific_coverage_limitation() -> None:
     assert all("Bluetooth" not in limitation for limitation in response.limitations)
 
 
+def test_wifi_answer_reports_only_wifi_profile_accounting() -> None:
+    dataset = AskRFDataset(
+        real_capture_count=40,
+        rejected_result_count=25,
+        accepted_records=[],
+        locations=[{"site": "campus"}],
+        coverage_ranges_hz=[(5_150_000_000, 5_250_000_000)],
+        unvalidated_capture_count=15,
+        technology_experimental_result_counts={"wifi": 4},
+        technology_rejected_result_counts={"wifi": 2, "lte": 23},
+        technology_coverage_counts={"5g": 8, "lte": 20, "bluetooth": 6, "wifi": 6},
+        technology_unvalidated_counts={"5g": 8, "lte": 20, "bluetooth": 6, "wifi": 6},
+        technology_presentation_counts={"5g": 0, "lte": 0, "bluetooth": 0, "wifi": 0},
+    )
+
+    response = build_answer(QuestionIntent("technology", "wifi"), _interval(), dataset)
+
+    assert response.answer_status == "profile_not_validated"
+    assert "2 results did not pass consistency checks" in response.display_answer
+    assert "25 results" not in response.display_answer
+    assert "from 6 relevant real sensor collection(s)" in response.evidence_explanation
+    assert "Kept 4 successful experimental technical-review results" in (
+        response.evidence_explanation
+    )
+
+
 def test_operator_accepted_5g_no_signal_uses_5g_language() -> None:
     dataset = AskRFDataset(
         real_capture_count=1,

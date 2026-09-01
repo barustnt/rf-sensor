@@ -108,6 +108,8 @@ class AskRFDataset:
     presentation_eligible_capture_count: int = 0
     unvalidated_capture_count: int = 0
     technology_unvalidated_counts: dict[str, int] = field(default_factory=dict)
+    technology_experimental_result_counts: dict[str, int] = field(default_factory=dict)
+    technology_rejected_result_counts: dict[str, int] = field(default_factory=dict)
     technology_coverage_counts: dict[str, int] = field(default_factory=dict)
     technology_presentation_counts: dict[str, int] = field(default_factory=dict)
 
@@ -237,7 +239,11 @@ def build_answer(
             interval,
             time_label,
             location_label,
-            evidence_text(dataset, accepted_count=len(positive_records)),
+            evidence_text(
+                dataset,
+                accepted_count=len(positive_records),
+                technology=intent.technology,
+            ),
             limitations,
             dataset,
         )
@@ -266,7 +272,11 @@ def build_answer(
             interval,
             time_label,
             location_label,
-            evidence_text(dataset, accepted_count=len(no_signal_records)),
+            evidence_text(
+                dataset,
+                accepted_count=len(no_signal_records),
+                technology=intent.technology,
+            ),
             limitations,
             dataset,
         )
@@ -317,6 +327,18 @@ async def load_presentation_dataset(
     experimental: list[AskRFRecord] = []
     rejected_count = 0
     unvalidated_count = 0
+    technology_experimental_result_counts = {
+        "lte": 0,
+        "5g": 0,
+        "bluetooth": 0,
+        "wifi": 0,
+    }
+    technology_rejected_result_counts = {
+        "lte": 0,
+        "5g": 0,
+        "bluetooth": 0,
+        "wifi": 0,
+    }
     if real_capture_ids:
         run_result = await session.execute(
             select(models.ModelRun, models.Capture, models.Sensor, models.AnalysisJob)
@@ -334,8 +356,16 @@ async def load_presentation_dataset(
                 if experimental_record is not None:
                     unvalidated_count += 1
                     experimental.append(experimental_record)
+                    profile = scan_profile_for_capture(profile_set, capture.profile_id)
+                    for technology in technology_experimental_result_counts:
+                        if _capture_matches_technology(capture, profile, technology):
+                            technology_experimental_result_counts[technology] += 1
                 else:
                     rejected_count += 1
+                    profile = scan_profile_for_capture(profile_set, capture.profile_id)
+                    for technology in technology_rejected_result_counts:
+                        if _capture_matches_technology(capture, profile, technology):
+                            technology_rejected_result_counts[technology] += 1
             else:
                 accepted.append(record)
 
@@ -369,6 +399,8 @@ async def load_presentation_dataset(
         presentation_eligible_capture_count=presentation_eligible_capture_count,
         unvalidated_capture_count=unvalidated_count,
         technology_unvalidated_counts=technology_unvalidated_counts,
+        technology_experimental_result_counts=technology_experimental_result_counts,
+        technology_rejected_result_counts=technology_rejected_result_counts,
         technology_coverage_counts=technology_coverage_counts,
         technology_presentation_counts=technology_presentation_counts,
     )
@@ -512,23 +544,42 @@ def human_label_list(labels: list[str]) -> str:
     return ", ".join(cleaned[:-1]) + f", and {cleaned[-1]}"
 
 
-def evidence_text(dataset: AskRFDataset, *, accepted_count: int) -> str:
+def evidence_text(
+    dataset: AskRFDataset,
+    *,
+    accepted_count: int,
+    technology: str | None = None,
+) -> str:
+    real_capture_count = dataset.real_capture_count
+    unvalidated_count = dataset.unvalidated_capture_count
+    rejected_result_count = dataset.rejected_result_count
+    if technology is not None:
+        real_capture_count = dataset.technology_coverage_counts.get(
+            technology, real_capture_count
+        )
+        unvalidated_count = dataset.technology_experimental_result_counts.get(
+            technology, unvalidated_count
+        )
+        rejected_result_count = dataset.technology_rejected_result_counts.get(
+            technology, rejected_result_count
+        )
+    capture_scope = "relevant real" if technology is not None else "real"
     parts = [
         f"Used {accepted_count} accepted presentation observation(s) from "
-        f"{dataset.real_capture_count} real sensor collection(s)."
+        f"{real_capture_count} {capture_scope} sensor collection(s)."
     ]
-    if dataset.unvalidated_capture_count:
+    if unvalidated_count:
         experimental_count = _count_phrase(
-            dataset.unvalidated_capture_count,
+            unvalidated_count,
             "successful experimental technical-review result",
         )
         parts.append(f"Kept {experimental_count} out of presentation conclusions.")
-    if dataset.rejected_result_count:
+    if rejected_result_count:
         parts.append(
-            f"{_count_phrase(dataset.rejected_result_count, 'result').capitalize()} did not "
+            f"{_count_phrase(rejected_result_count, 'result').capitalize()} did not "
             "pass consistency checks."
         )
-    if not dataset.unvalidated_capture_count and not dataset.rejected_result_count:
+    if not unvalidated_count and not rejected_result_count:
         parts.append("No stored result was set aside by presentation filtering.")
     return " ".join(parts)
 
@@ -542,14 +593,17 @@ def _profile_not_validated_response(
     dataset: AskRFDataset,
 ) -> AskRFResponse:
     label = _technology_display_label(technology)
+    rejected_result_count = dataset.technology_rejected_result_counts.get(
+        technology, dataset.rejected_result_count
+    )
     experimental_text = _experimental_finding_text(
         dataset.experimental_records, QuestionIntent("technology", technology)
     )
     prefix = f"{experimental_text} " if experimental_text else ""
     validation_reason = "technology identification for the scan profile has not yet been validated"
-    if dataset.rejected_result_count:
+    if rejected_result_count:
         validation_reason += (
-            f", and {_count_phrase(dataset.rejected_result_count, 'result')} did not pass "
+            f", and {_count_phrase(rejected_result_count, 'result')} did not pass "
             "consistency checks"
         )
     return _response(
@@ -562,7 +616,11 @@ def _profile_not_validated_response(
         interval,
         time_label,
         location_label,
-        evidence_text(dataset, accepted_count=len(dataset.accepted_records)),
+        evidence_text(
+            dataset,
+            accepted_count=len(dataset.accepted_records),
+            technology=technology,
+        ),
         limitations
         + [
             "Experimental scan profiles can show that a range was captured, but they do not "
@@ -581,12 +639,21 @@ def _partial_response(
     *,
     intent: QuestionIntent | None = None,
 ) -> AskRFResponse:
+    unvalidated_count = dataset.unvalidated_capture_count
+    rejected_result_count = dataset.rejected_result_count
+    if intent and intent.technology:
+        unvalidated_count = dataset.technology_experimental_result_counts.get(
+            intent.technology, unvalidated_count
+        )
+        rejected_result_count = dataset.technology_rejected_result_counts.get(
+            intent.technology, rejected_result_count
+        )
     reasons = []
-    if dataset.unvalidated_capture_count:
+    if unvalidated_count:
         reasons.append("the monitored profile remains experimental")
-    if dataset.rejected_result_count:
+    if rejected_result_count:
         reasons.append(
-            f"{_count_phrase(dataset.rejected_result_count, 'result')} did not pass "
+            f"{_count_phrase(rejected_result_count, 'result')} did not pass "
             "consistency checks"
         )
     if reasons:
@@ -609,7 +676,11 @@ def _partial_response(
         interval,
         time_label,
         location_label,
-        evidence_text(dataset, accepted_count=len(dataset.accepted_records)),
+        evidence_text(
+            dataset,
+            accepted_count=len(dataset.accepted_records),
+            technology=intent.technology if intent else None,
+        ),
         limitations,
         dataset,
     )
