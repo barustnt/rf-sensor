@@ -37,7 +37,6 @@ from rf_platform.worker.semantic_markers import (
 
 BLUETOOTH_RANGE_HZ = (2_402_000_000, 2_480_000_000)
 DEFAULT_LIMITATIONS = [
-    "AI-assisted RF observation—not independently confirmed ground truth.",
     (
         "Answers are based only on accepted stored observations already available through the "
         "platform API."
@@ -46,15 +45,19 @@ DEFAULT_LIMITATIONS = [
 SUPPORTED_QUESTION_EXAMPLE = "What happened today at 10 AM?"
 
 _TIME_HINT_RE = re.compile(
-    r"\b(today|yesterday|morning|tonight|\d{4}-\d{2}-\d{2}|\d{1,2}(?::\d{2})?\s*(?:am|pm))\b",
+    r"\b(today|yesterday|morning|tonight|last\s+hour|past\s+hour|\d{4}-\d{2}-\d{2}|"
+    r"\d{1,2}(?::\d{2})?\s*(?:am|pm))\b",
     re.I,
 )
 _TECH_5G_RE = re.compile(r"\b(5g|5g\s*nr|nr)\b", re.I)
 _LTE_RE = re.compile(r"\b(lte|4g)\b", re.I)
 _BLUETOOTH_RE = re.compile(r"\b(bluetooth|ble)\b", re.I)
+_WIFI_RE = re.compile(r"\b(wi[ -]?fi|wifi|wlan|802\.11)\b", re.I)
+_ISM_RE = re.compile(r"\b(ism|srd)\b", re.I)
 _PUNCTUATION_SPACE_RE = re.compile(r"\s+([?!.,;:])")
 _WHITESPACE_RE = re.compile(r"\s+")
 _HAPPEND_ALIAS_RE = re.compile(r"\bhappend\b")
+_UNICODE_DASHES = str.maketrans({"‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-"})
 
 
 @dataclass(frozen=True)
@@ -100,9 +103,12 @@ class AskRFDataset:
     accepted_records: list[AskRFRecord]
     locations: list[dict[str, Any]]
     coverage_ranges_hz: list[tuple[int, int]]
+    experimental_records: list[AskRFRecord] = field(default_factory=list)
     presentation_eligible_capture_count: int = 0
     unvalidated_capture_count: int = 0
     technology_unvalidated_counts: dict[str, int] = field(default_factory=dict)
+    technology_experimental_result_counts: dict[str, int] = field(default_factory=dict)
+    technology_rejected_result_counts: dict[str, int] = field(default_factory=dict)
     technology_coverage_counts: dict[str, int] = field(default_factory=dict)
     technology_presentation_counts: dict[str, int] = field(default_factory=dict)
 
@@ -145,6 +151,8 @@ def interpret_question(question: str) -> QuestionIntent:
         return QuestionIntent("technology", "lte")
     if _BLUETOOTH_RE.search(text):
         return QuestionIntent("technology", "bluetooth")
+    if _WIFI_RE.search(text):
+        return QuestionIntent("technology", "wifi")
     if any(phrase in text for phrase in ("what happened", "technologies", "nearby", "unusual")):
         return QuestionIntent("summary")
     return QuestionIntent("unsupported")
@@ -160,11 +168,15 @@ def build_answer(
     limitations = list(DEFAULT_LIMITATIONS)
     if interval.assumptions:
         limitations.extend(interval.assumptions)
-    coverage = coverage_summary(dataset.coverage_ranges_hz)
+    coverage = (
+        coverage_summary(dataset.coverage_ranges_hz)
+        if intent.kind == "summary" or intent.technology == "bluetooth"
+        else None
+    )
     if coverage:
         limitations.append(coverage)
 
-    if intent.technology in {"lte", "5g"}:
+    if intent.technology in {"lte", "5g", "bluetooth", "wifi"}:
         tech_count = dataset.technology_coverage_counts.get(intent.technology, 0)
         unvalidated_count = dataset.technology_unvalidated_counts.get(intent.technology, 0)
         presentation_count = dataset.technology_presentation_counts.get(intent.technology, 0)
@@ -198,7 +210,9 @@ def build_answer(
     ]
 
     if positive_records and no_signal_records:
-        return _partial_response(interval, time_label, location_label, limitations, dataset)
+        return _partial_response(
+            interval, time_label, location_label, limitations, dataset, intent=intent
+        )
     if positive_records:
         labels = sorted(
             {label for record in positive_records for label in matching_labels(record, intent)}
@@ -224,7 +238,11 @@ def build_answer(
             interval,
             time_label,
             location_label,
-            evidence_text(dataset, accepted_count=len(positive_records)),
+            evidence_text(
+                dataset,
+                accepted_count=len(positive_records),
+                technology=intent.technology,
+            ),
             limitations,
             dataset,
         )
@@ -253,13 +271,19 @@ def build_answer(
             interval,
             time_label,
             location_label,
-            evidence_text(dataset, accepted_count=len(no_signal_records)),
+            evidence_text(
+                dataset,
+                accepted_count=len(no_signal_records),
+                technology=intent.technology,
+            ),
             limitations,
             dataset,
         )
 
     if dataset.rejected_result_count > 0 or dataset.accepted_records == []:
-        return _partial_response(interval, time_label, location_label, limitations, dataset)
+        return _partial_response(
+            interval, time_label, location_label, limitations, dataset, intent=intent
+        )
 
     return _response(
         "no_data",
@@ -299,8 +323,21 @@ async def load_presentation_dataset(
     capture_by_id = {capture.capture_id: capture for capture, _sensor in real_rows}
 
     accepted: list[AskRFRecord] = []
+    experimental: list[AskRFRecord] = []
     rejected_count = 0
     unvalidated_count = 0
+    technology_experimental_result_counts = {
+        "lte": 0,
+        "5g": 0,
+        "bluetooth": 0,
+        "wifi": 0,
+    }
+    technology_rejected_result_counts = {
+        "lte": 0,
+        "5g": 0,
+        "bluetooth": 0,
+        "wifi": 0,
+    }
     if real_capture_ids:
         run_result = await session.execute(
             select(models.ModelRun, models.Capture, models.Sensor, models.AnalysisJob)
@@ -312,12 +349,22 @@ async def load_presentation_dataset(
         for run, capture, sensor, job in run_result.all():
             record = presentation_record_from_run(run, capture, sensor, job, profile_set)
             if record is None:
-                if _successful_technical_only_experimental_result(
+                experimental_record = _experimental_record_from_run(
                     run, capture, sensor, job, profile_set
-                ):
+                )
+                if experimental_record is not None:
                     unvalidated_count += 1
+                    experimental.append(experimental_record)
+                    profile = scan_profile_for_capture(profile_set, capture.profile_id)
+                    for technology in technology_experimental_result_counts:
+                        if _capture_matches_technology(capture, profile, technology):
+                            technology_experimental_result_counts[technology] += 1
                 else:
                     rejected_count += 1
+                    profile = scan_profile_for_capture(profile_set, capture.profile_id)
+                    for technology in technology_rejected_result_counts:
+                        if _capture_matches_technology(capture, profile, technology):
+                            technology_rejected_result_counts[technology] += 1
             else:
                 accepted.append(record)
 
@@ -347,9 +394,12 @@ async def load_presentation_dataset(
         accepted_records=accepted,
         locations=locations,
         coverage_ranges_hz=coverage_ranges,
+        experimental_records=experimental,
         presentation_eligible_capture_count=presentation_eligible_capture_count,
         unvalidated_capture_count=unvalidated_count,
         technology_unvalidated_counts=technology_unvalidated_counts,
+        technology_experimental_result_counts=technology_experimental_result_counts,
+        technology_rejected_result_counts=technology_rejected_result_counts,
         technology_coverage_counts=technology_coverage_counts,
         technology_presentation_counts=technology_presentation_counts,
     )
@@ -362,6 +412,20 @@ def presentation_record_from_run(
     job: models.AnalysisJob,
     profile_set: ScanProfileSet | None = None,
 ) -> AskRFRecord | None:
+    record = _validated_record_from_run(run, capture, sensor, job)
+    if record is None:
+        return None
+    if not accepted_run_for_presentation(run, capture, sensor, job, profile_set):
+        return None
+    return record
+
+
+def _validated_record_from_run(
+    run: models.ModelRun,
+    capture: models.Capture,
+    sensor: models.Sensor,
+    job: models.AnalysisJob,
+) -> AskRFRecord | None:
     if sensor.adapter == "simulated":
         return None
     if run.adapter == "mock" or run.model_version == "mock-v1":
@@ -370,7 +434,11 @@ def presentation_record_from_run(
         return None
     if job.status in {"failed", "deadletter"}:
         return None
-    if job.error_category in {"model_configuration_mismatch", SEMANTIC_INCONSISTENCY}:
+    if job.error_category in {
+        "model_configuration_mismatch",
+        SEMANTIC_INCONSISTENCY,
+        BAND_INCOMPATIBLE,
+    }:
         return None
     structured = run.structured_result if isinstance(run.structured_result, dict) else {}
     technologies = _list_of_dicts(structured.get("technologies"))
@@ -379,11 +447,9 @@ def presentation_record_from_run(
     quality_flags = [
         str(item) for item in structured.get("quality_flags", []) if isinstance(item, str)
     ]
-    if SEMANTIC_INCONSISTENCY in quality_flags:
+    if SEMANTIC_INCONSISTENCY in quality_flags or BAND_INCOMPATIBLE in quality_flags:
         return None
     if (technologies or signals) and has_no_signal_marker(overall, quality_flags):
-        return None
-    if not accepted_run_for_presentation(run, capture, sensor, job, profile_set):
         return None
     frequency_range = capture_frequency_range(capture)
     return AskRFRecord(
@@ -412,8 +478,9 @@ def records_with_positive_findings(
 
 def matching_labels(record: AskRFRecord, intent: QuestionIntent) -> list[str]:
     labels = record.technology_labels + record.signal_labels
-    if intent.technology == "bluetooth":
-        return [label for label in labels if _BLUETOOTH_RE.search(label)]
+    pattern = _technology_pattern(intent.technology)
+    if pattern is not None:
+        return [label for label in labels if pattern.search(label)]
     return labels
 
 
@@ -476,23 +543,40 @@ def human_label_list(labels: list[str]) -> str:
     return ", ".join(cleaned[:-1]) + f", and {cleaned[-1]}"
 
 
-def evidence_text(dataset: AskRFDataset, *, accepted_count: int) -> str:
+def evidence_text(
+    dataset: AskRFDataset,
+    *,
+    accepted_count: int,
+    technology: str | None = None,
+) -> str:
+    real_capture_count = dataset.real_capture_count
+    unvalidated_count = dataset.unvalidated_capture_count
+    rejected_result_count = dataset.rejected_result_count
+    if technology is not None:
+        real_capture_count = dataset.technology_coverage_counts.get(technology, real_capture_count)
+        unvalidated_count = dataset.technology_experimental_result_counts.get(
+            technology, unvalidated_count
+        )
+        rejected_result_count = dataset.technology_rejected_result_counts.get(
+            technology, rejected_result_count
+        )
+    capture_scope = "relevant real" if technology is not None else "real"
     parts = [
         f"Used {accepted_count} accepted presentation observation(s) from "
-        f"{dataset.real_capture_count} real sensor collection(s)."
+        f"{real_capture_count} {capture_scope} sensor collection(s)."
     ]
-    if dataset.unvalidated_capture_count:
+    if unvalidated_count:
         experimental_count = _count_phrase(
-            dataset.unvalidated_capture_count,
+            unvalidated_count,
             "successful experimental technical-review result",
         )
         parts.append(f"Kept {experimental_count} out of presentation conclusions.")
-    if dataset.rejected_result_count:
+    if rejected_result_count:
         parts.append(
-            f"{_count_phrase(dataset.rejected_result_count, 'result').capitalize()} did not "
+            f"{_count_phrase(rejected_result_count, 'result').capitalize()} did not "
             "pass consistency checks."
         )
-    if not dataset.unvalidated_capture_count and not dataset.rejected_result_count:
+    if not unvalidated_count and not rejected_result_count:
         parts.append("No stored result was set aside by presentation filtering.")
     return " ".join(parts)
 
@@ -505,18 +589,25 @@ def _profile_not_validated_response(
     limitations: list[str],
     dataset: AskRFDataset,
 ) -> AskRFResponse:
-    label = "5G" if technology == "5g" else technology.upper()
+    label = _technology_display_label(technology)
+    experimental_text = _experimental_finding_text(
+        dataset.experimental_records, QuestionIntent("technology", technology)
+    )
+    if experimental_text:
+        answer = experimental_text
+    else:
+        answer = f"No internally consistent {label} candidate was reported during {time_label}."
     return _response(
         "profile_not_validated",
-        (
-            f"The system monitored part of this frequency range during {time_label}, but "
-            f"technology identification for the scan profile has not yet been validated. "
-            f"No reliable {label} conclusion can be provided."
-        ),
+        answer,
         interval,
         time_label,
         location_label,
-        evidence_text(dataset, accepted_count=len(dataset.accepted_records)),
+        evidence_text(
+            dataset,
+            accepted_count=len(dataset.accepted_records),
+            technology=technology,
+        ),
         limitations
         + [
             "Experimental scan profiles can show that a range was captured, but they do not "
@@ -532,32 +623,42 @@ def _partial_response(
     location_label: str,
     limitations: list[str],
     dataset: AskRFDataset,
+    *,
+    intent: QuestionIntent | None = None,
 ) -> AskRFResponse:
-    reasons = []
-    if dataset.unvalidated_capture_count:
-        reasons.append("the monitored profile remains experimental")
-    if dataset.rejected_result_count:
-        reasons.append(
-            f"{_count_phrase(dataset.rejected_result_count, 'result')} did not pass "
-            "consistency checks"
+    unvalidated_count = dataset.unvalidated_capture_count
+    rejected_result_count = dataset.rejected_result_count
+    if intent and intent.technology:
+        unvalidated_count = dataset.technology_experimental_result_counts.get(
+            intent.technology, unvalidated_count
         )
-    if reasons:
+        rejected_result_count = dataset.technology_rejected_result_counts.get(
+            intent.technology, rejected_result_count
+        )
+    has_filtered_results = bool(unvalidated_count or rejected_result_count)
+    experimental_text = _experimental_finding_text(
+        dataset.experimental_records, intent or QuestionIntent("summary")
+    )
+    if experimental_text:
+        answer = experimental_text
+    elif not has_filtered_results:
         answer = (
-            "The system collected observations for this period, but "
-            f"{_join_reasons(reasons)}. No reliable conclusion can be provided."
+            "The system collected conflicting internally consistent observations for this "
+            "period. No reliable conclusion can be provided without further review."
         )
     else:
-        answer = (
-            "The system collected observations for this period, but some results did not pass "
-            "consistency checks. No reliable conclusion can be provided."
-        )
+        answer = "No internally consistent candidate technology was reported for this period."
     return _response(
         "partial_data",
         answer,
         interval,
         time_label,
         location_label,
-        evidence_text(dataset, accepted_count=len(dataset.accepted_records)),
+        evidence_text(
+            dataset,
+            accepted_count=len(dataset.accepted_records),
+            technology=intent.technology if intent else None,
+        ),
         limitations,
         dataset,
     )
@@ -565,10 +666,11 @@ def _partial_response(
 
 def _not_monitored_response(interval: InterpretedInterval, technology: str) -> AskRFResponse:
     time_label = format_time_label(interval)
-    label = "5G bands" if technology == "5g" else "LTE bands"
+    technology_label = _technology_display_label(technology)
+    label = f"{technology_label} bands"
     answer = (
         f"The system did not monitor the configured {label} during {time_label}, so it cannot "
-        f"determine whether {technology.upper()} activity was present."
+        f"determine whether {technology_label} activity was present."
     )
     return _response(
         "not_monitored",
@@ -580,7 +682,7 @@ def _not_monitored_response(interval: InterpretedInterval, technology: str) -> A
         DEFAULT_LIMITATIONS
         + [
             "Only explicitly enabled, real scan-profile captures can establish monitored coverage "
-            "for LTE or 5G questions."
+            "for technology-specific questions."
         ],
         None,
     )
@@ -671,7 +773,8 @@ def _resolve_interval(
 
 
 def normalize_question(question: str) -> str:
-    normalized = _PUNCTUATION_SPACE_RE.sub(r"\1", question.strip().lower())
+    normalized = question.strip().lower().translate(_UNICODE_DASHES)
+    normalized = _PUNCTUATION_SPACE_RE.sub(r"\1", normalized)
     normalized = _WHITESPACE_RE.sub(" ", normalized)
     return _HAPPEND_ALIAS_RE.sub("happened", normalized)
 
@@ -694,53 +797,106 @@ def _successful_technical_only_experimental_result(
     job: models.AnalysisJob,
     profile_set: ScanProfileSet | None,
 ) -> bool:
+    return _experimental_record_from_run(run, capture, sensor, job, profile_set) is not None
+
+
+def _experimental_record_from_run(
+    run: models.ModelRun,
+    capture: models.Capture,
+    sensor: models.Sensor,
+    job: models.AnalysisJob,
+    profile_set: ScanProfileSet | None,
+) -> AskRFRecord | None:
     profile = scan_profile_for_capture(profile_set, capture.profile_id)
     if profile is None or profile_presentation_eligible(profile, capture.profile_id):
-        return False
-    if sensor.adapter == "simulated":
-        return False
-    if run.adapter == "mock" or run.model_version == "mock-v1":
-        return False
-    if run.status != "succeeded" or not run.parser_valid:
-        return False
-    if job.status in {"failed", "deadletter"}:
-        return False
-    if job.error_category in {
-        "model_configuration_mismatch",
-        SEMANTIC_INCONSISTENCY,
-        BAND_INCOMPATIBLE,
-    }:
-        return False
-    structured = run.structured_result if isinstance(run.structured_result, dict) else {}
-    technologies = _list_of_dicts(structured.get("technologies"))
-    signals = _list_of_dicts(structured.get("signals"))
-    overall = str(structured.get("overall_assessment") or "")
-    quality_flags = [
-        str(item) for item in structured.get("quality_flags", []) if isinstance(item, str)
-    ]
-    if SEMANTIC_INCONSISTENCY in quality_flags or BAND_INCOMPATIBLE in quality_flags:
-        return False
-    if (technologies or signals) and has_no_signal_marker(overall, quality_flags):
-        return False
+        return None
+    record = _validated_record_from_run(run, capture, sensor, job)
+    if record is None:
+        return None
     compatibility = check_findings_band_compatibility(
-        technologies=technologies,
-        signals=signals,
+        technologies=record.technologies,
+        signals=record.signals,
         frequency_range_hz=capture_frequency_range(capture, profile_set),
         profile_id=capture.profile_id,
     )
-    return not compatibility.incompatible
+    return None if compatibility.incompatible else record
+
+
+def _experimental_finding_text(records: list[AskRFRecord], intent: QuestionIntent) -> str | None:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    pattern = _technology_pattern(intent.technology)
+    for record in records:
+        for finding in record.technologies:
+            label = str(finding.get("label") or "").strip()
+            if not label or (pattern is not None and not pattern.search(label)):
+                continue
+            technology = intent.technology or _canonical_technology(label)
+            if technology is None:
+                continue
+            grouped.setdefault(technology, []).append(finding)
+    if not grouped:
+        return None
+
+    ordered = sorted(grouped.items(), key=lambda item: (-len(item[1]), item[0]))
+    if intent.technology is not None:
+        technology, findings = ordered[0]
+        text = (
+            "Preliminary RF-GPT candidate: possible "
+            f"{_technology_display_label(technology)}-like activity was reported in "
+            f"{_experimental_analysis_count(len(findings))}."
+        )
+        return text
+
+    clauses = []
+    for technology, findings in ordered:
+        clause = (
+            f"{_technology_display_label(technology)}-like activity in "
+            f"{_experimental_analysis_count(len(findings))}"
+        )
+        clauses.append(clause)
+    return "Preliminary RF-GPT candidates: " + "; ".join(clauses) + "."
+
+
+def _experimental_analysis_count(count: int) -> str:
+    if count == 1:
+        return "one internally consistent experimental analysis"
+    return f"{count} internally consistent experimental analyses"
+
+
+def _canonical_technology(label: str) -> str | None:
+    for technology in ("lte", "5g", "bluetooth", "wifi", "ism"):
+        pattern = _technology_pattern(technology)
+        if pattern is not None and pattern.search(label):
+            return technology
+    return None
+
+
+def _technology_pattern(technology: str | None) -> re.Pattern[str] | None:
+    if technology is None:
+        return None
+    return {
+        "lte": _LTE_RE,
+        "5g": _TECH_5G_RE,
+        "bluetooth": _BLUETOOTH_RE,
+        "wifi": _WIFI_RE,
+        "ism": _ISM_RE,
+    }.get(technology)
+
+
+def _technology_display_label(technology: str) -> str:
+    return {
+        "lte": "LTE",
+        "5g": "5G",
+        "bluetooth": "Bluetooth/BLE",
+        "wifi": "Wi-Fi",
+        "ism": "ISM/SRD",
+    }.get(technology, technology.upper())
 
 
 def _count_phrase(count: int, noun: str) -> str:
     if count == 1:
         return f"one {noun}"
     return f"{count} {noun}s"
-
-
-def _join_reasons(reasons: list[str]) -> str:
-    if len(reasons) <= 1:
-        return reasons[0] if reasons else "stored observations need further review"
-    return ", ".join(reasons[:-1]) + f", and {reasons[-1]}"
 
 
 def _load_scan_profiles(settings: Settings | None) -> ScanProfileSet | None:

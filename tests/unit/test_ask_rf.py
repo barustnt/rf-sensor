@@ -47,6 +47,7 @@ def _interval() -> InterpretedInterval:
 def _record(
     *,
     labels: list[str] | None = None,
+    model_score: float | None = None,
     overall: str = "RF observation only.",
     flags: list[str] | None = None,
     coverage: tuple[int, int] = (2_430_000_000, 2_450_000_000),
@@ -65,7 +66,7 @@ def _record(
         technologies=[
             {
                 "label": label,
-                "model_score": None,
+                "model_score": model_score,
                 "observation": "RF-only observation.",
                 "evidence": ["capture_id:capture-1"],
             }
@@ -414,7 +415,7 @@ def test_rendered_answer_hides_json_and_technical_identifiers() -> None:
         time_label="August 26, 2026, between 10 AM and 11 AM",
         location_label="campus / lab",
         evidence_explanation="Used 1 accepted observation from 1 real hardware capture.",
-        limitations=["AI-assisted RF observation—not independently confirmed ground truth."],
+        limitations=["Answers are based only on stored observations."],
         follow_up_context={"analysis_id": "a3c875f4-94ac-4247-990d-a04b983f3fdf"},
     )
 
@@ -456,7 +457,7 @@ def test_plain_language_rendering_for_every_answer_status(status: str) -> None:
         time_label="August 26, 2026, between 10 AM and 11 AM",
         location_label="monitored area",
         evidence_explanation="Used accepted observations only.",
-        limitations=["AI-assisted RF observation—not independently confirmed ground truth."],
+        limitations=["Answers are based only on stored observations."],
         follow_up_context={},
     )
 
@@ -643,6 +644,18 @@ def test_ask_rf_hides_gradio_technical_footer() -> None:
     assert "display: none !important" in ASK_RF_CSS[footer_css_start:]
 
 
+def test_ask_rf_omits_deprecated_ground_truth_notice() -> None:
+    public_sources = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in [
+            Path("src/rf_platform/ask_rf/main.py"),
+            Path("src/rf_platform/backend/services/ask_rf.py"),
+        ]
+    )
+
+    assert "AI-assisted RF observation" not in public_sources
+
+
 def test_ask_rf_css_wraps_responsively_without_fixed_overflow() -> None:
     assert "overflow-x: hidden" in ASK_RF_CSS
     assert "flex-wrap: wrap" in ASK_RF_CSS
@@ -693,9 +706,149 @@ def test_profile_not_validated_answer_for_experimental_5g_coverage() -> None:
     response = build_answer(QuestionIntent("technology", "5g"), _interval(), dataset)
 
     assert response.answer_status == "profile_not_validated"
-    assert "monitored part of this frequency range" in response.display_answer
-    assert "No reliable 5G conclusion" in response.display_answer
+    assert "No internally consistent 5G candidate was reported" in response.display_answer
     assert "profile" not in response.follow_up_context
+
+
+def test_experimental_lte_score_is_not_shown_in_public_answer() -> None:
+    dataset = AskRFDataset(
+        real_capture_count=12,
+        rejected_result_count=10,
+        accepted_records=[],
+        experimental_records=[
+            _record(
+                labels=["LTE"],
+                model_score=0.5,
+                coverage=(1_805_000_000, 1_825_000_000),
+            ),
+            _record(
+                labels=["4G"],
+                model_score=0.7,
+                coverage=(1_823_000_000, 1_843_000_000),
+            ),
+        ],
+        locations=[{"site": "campus", "room": "lab"}],
+        coverage_ranges_hz=[(1_805_000_000, 1_843_000_000)],
+        unvalidated_capture_count=2,
+        technology_coverage_counts={"5g": 0, "lte": 12, "bluetooth": 0, "wifi": 0},
+        technology_unvalidated_counts={"5g": 0, "lte": 12, "bluetooth": 0, "wifi": 0},
+        technology_presentation_counts={"5g": 0, "lte": 0, "bluetooth": 0, "wifi": 0},
+    )
+
+    response = build_answer(QuestionIntent("technology", "lte"), _interval(), dataset)
+
+    assert response.answer_status == "profile_not_validated"
+    assert "Preliminary RF-GPT candidate: possible LTE-like activity" in response.display_answer
+    assert "0.60" not in response.display_answer
+    assert "score" not in response.display_answer.lower()
+    assert "probability" not in response.display_answer.lower()
+    assert "consistency checks" not in response.display_answer
+    assert "10 results did not pass consistency checks" in response.evidence_explanation
+
+
+def test_experimental_summary_lists_each_consistent_known_technology() -> None:
+    dataset = AskRFDataset(
+        real_capture_count=4,
+        rejected_result_count=1,
+        accepted_records=[],
+        experimental_records=[
+            _record(labels=["LTE"], model_score=0.99),
+            _record(labels=["4G"], model_score=0.97),
+            _record(labels=["Bluetooth"], model_score=None),
+            _record(labels=["Wi-Fi"], model_score=0.8),
+        ],
+        locations=[{"site": "campus"}],
+        coverage_ranges_hz=[(1_805_000_000, 5_250_000_000)],
+        unvalidated_capture_count=4,
+    )
+
+    response = build_answer(QuestionIntent("summary"), _interval(), dataset)
+
+    assert response.answer_status == "partial_data"
+    assert "LTE-like activity in 2 internally consistent experimental analyses" in (
+        response.display_answer
+    )
+    assert "Bluetooth/BLE-like activity in one internally consistent experimental analysis" in (
+        response.display_answer
+    )
+    assert "Wi-Fi-like activity in one internally consistent experimental analysis" in (
+        response.display_answer
+    )
+    assert "0.98" not in response.display_answer
+    assert "score" not in response.display_answer.lower()
+    assert "uncalibrated" not in response.display_answer.lower()
+    assert "not confirmed technology detections" not in response.display_answer
+    assert "remaining limitation" not in response.display_answer
+
+
+def test_wifi_question_has_specific_deterministic_intent() -> None:
+    assert interpret_question("Any WiFi nearby?") == QuestionIntent("technology", "wifi")
+    assert interpret_question("Was WLAN observed?") == QuestionIntent("technology", "wifi")
+    assert interpret_question("Was Wi‑Fi observed during the last hour?") == QuestionIntent(
+        "technology", "wifi"
+    )
+
+
+def test_last_hour_does_not_reuse_prior_follow_up_interval() -> None:
+    prior = {
+        "start_utc": "2026-08-25T06:00:00+00:00",
+        "end_utc": "2026-08-25T07:00:00+00:00",
+        "display_timezone": "Asia/Dubai",
+    }
+    now = datetime(2026, 9, 1, 7, 30, tzinfo=UTC)
+
+    interval = _resolve_interval(
+        "Was Wi‑Fi observed during the last hour?", "Asia/Dubai", prior, now
+    )
+
+    assert interval.start_utc.isoformat() == "2026-09-01T06:30:00+00:00"
+    assert interval.end_utc.isoformat() == "2026-09-01T07:30:00+00:00"
+
+
+def test_wifi_answer_omits_bluetooth_specific_coverage_limitation() -> None:
+    dataset = AskRFDataset(
+        real_capture_count=1,
+        rejected_result_count=1,
+        accepted_records=[],
+        locations=[{"site": "campus"}],
+        coverage_ranges_hz=[(2_400_000_000, 2_420_000_000)],
+        unvalidated_capture_count=1,
+        technology_coverage_counts={"5g": 0, "lte": 0, "bluetooth": 1, "wifi": 1},
+        technology_unvalidated_counts={"5g": 0, "lte": 0, "bluetooth": 1, "wifi": 1},
+        technology_presentation_counts={"5g": 0, "lte": 0, "bluetooth": 0, "wifi": 0},
+    )
+
+    response = build_answer(QuestionIntent("technology", "wifi"), _interval(), dataset)
+
+    assert response.answer_status == "profile_not_validated"
+    assert all("Bluetooth" not in limitation for limitation in response.limitations)
+
+
+def test_wifi_answer_reports_only_wifi_profile_accounting() -> None:
+    dataset = AskRFDataset(
+        real_capture_count=40,
+        rejected_result_count=25,
+        accepted_records=[],
+        locations=[{"site": "campus"}],
+        coverage_ranges_hz=[(5_150_000_000, 5_250_000_000)],
+        unvalidated_capture_count=15,
+        technology_experimental_result_counts={"wifi": 4},
+        technology_rejected_result_counts={"wifi": 2, "lte": 23},
+        technology_coverage_counts={"5g": 8, "lte": 20, "bluetooth": 6, "wifi": 6},
+        technology_unvalidated_counts={"5g": 8, "lte": 20, "bluetooth": 6, "wifi": 6},
+        technology_presentation_counts={"5g": 0, "lte": 0, "bluetooth": 0, "wifi": 0},
+    )
+
+    response = build_answer(QuestionIntent("technology", "wifi"), _interval(), dataset)
+
+    assert response.answer_status == "profile_not_validated"
+    assert "consistency checks" not in response.display_answer
+    assert "25 results" not in response.display_answer
+    assert "2 results did not pass consistency checks" in response.evidence_explanation
+    assert "from 6 relevant real sensor collection(s)" in response.evidence_explanation
+    assert "Kept 4 successful experimental technical-review results" in (
+        response.evidence_explanation
+    )
 
 
 def test_operator_accepted_5g_no_signal_uses_5g_language() -> None:
@@ -756,8 +909,9 @@ def test_mixed_experimental_success_and_semantic_rejection_are_accounted_for_pla
     ).lower()
 
     assert response.answer_status == "partial_data"
-    assert "monitored profile remains experimental" in response.display_answer
-    assert "one result did not pass consistency checks" in response.display_answer
+    assert response.display_answer == (
+        "No internally consistent candidate technology was reported for this period."
+    )
     assert (
         "Kept one successful experimental technical-review result" in response.evidence_explanation
     )
@@ -782,10 +936,10 @@ def test_bluetooth_query_with_only_experimental_and_rejected_data_stays_cautious
         _mixed_experimental_rejected_dataset(),
     )
 
-    assert response.answer_status == "partial_data"
-    assert "Bluetooth was not confirmed" not in response.display_answer
-    assert "observed Bluetooth" not in response.display_answer
-    assert "No reliable conclusion" in response.display_answer
+    assert response.answer_status == "profile_not_validated"
+    assert "No internally consistent Bluetooth/BLE candidate was reported" in (
+        response.display_answer
+    )
 
 
 @pytest.mark.parametrize("technology", ["lte", "5g"])

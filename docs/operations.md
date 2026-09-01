@@ -148,6 +148,37 @@ GET /api/v1/sensors/{sensor_id}/jobs/summary
 The browser exposes no start/stop, retune, transmit, token, password, or profile-promotion controls.
 Ask RF remains separate and read-only on port 7861.
 
+### Live stack with an external vLLM
+
+`scripts/live_up.sh` starts the complete operational stack. By default it manages a local vLLM.
+To use an already-running LAN server without starting or stopping that server, set:
+
+```bash
+RF_VLLM_MANAGED=false \
+RF_RFGPT_ENDPOINT=http://192.168.1.11:8000/v1 \
+RF_RFGPT_MODEL_NAME=rfgpt \
+./scripts/live_up.sh
+```
+
+Before the API, worker, or scanner starts, the script checks `/health` and `/v1/models`. The
+configured `RF_RFGPT_MODEL_NAME` must exactly match an advertised model ID. Prefer launching the
+remote server with `--served-model-name rfgpt`. If that is not possible, set
+`RF_RFGPT_MODEL_NAME` to the exact ID returned by `/v1/models`.
+
+`scripts/live_down.sh` stops only processes that `live_up.sh` started on the sensor host. With
+`RF_VLLM_MANAGED=false`, it never attempts to stop the external vLLM. It stops operational Compose
+services without `-v`, so the PostgreSQL history volume is preserved.
+
+When `RF_GRADIO_SHARE=true` (the `live_up.sh` default), startup prints separate temporary
+`gradio.live` links for Command Center and Ask RF. Set `RF_GRADIO_SHARE=false` to keep both
+interfaces local. The Command Center link exposes technical operator views and actions without an
+application login, so share it only with trusted operators and stop the stack when the session ends.
+
+Experimental Ask RF findings may include an aggregate model-reported score when the stored model
+output supplied one. The score is explicitly labeled as uncalibrated, rejected or band-incompatible
+results are excluded from it, and the answer remains non-definitive until the scan profile is
+validated.
+
 See `docs/scan-profiles.md` for the UAE catalogue, regulatory/source notes, qualification states,
 coverage accounting, band-compatibility checks, and the full manual acceptance plan. RF-GPT labels
 remain unverified model observations. Experimental profiles may be scanned and shown to technical

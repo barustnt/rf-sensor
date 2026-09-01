@@ -7,6 +7,7 @@ COMPOSE_FILE="${REPO_ROOT}/deploy/docker-compose.infra.yml"
 COMPOSE_PROJECT="rf-sensor"
 RF_VLLM_BIN="${RF_VLLM_BIN:-/home/user/miniconda3/envs/vllm-env/bin/vllm}"
 RF_RFGPT_MODEL_PATH="${RF_RFGPT_MODEL_PATH:-/home/user/models/Qwen2.5-VL-7B-rfa-wtr-v2-joint}"
+RF_VLLM_MANAGED_VALUE="${RF_VLLM_MANAGED:-true}"
 
 log() {
   printf '[live-down] %s\n' "$*"
@@ -73,7 +74,11 @@ stop_service worker "rf_platform.worker.main" || status=1
 stop_service ask-rf "rf_platform.ask_rf.main" || status=1
 stop_service dashboard "rf_platform.dashboard.main" || status=1
 stop_service api "rf_platform.backend.main" || status=1
-stop_service vllm "$RF_VLLM_BIN serve $RF_RFGPT_MODEL_PATH" || status=1
+if [[ "$RF_VLLM_MANAGED_VALUE" == "true" ]]; then
+  stop_service vllm "$RF_VLLM_BIN serve $RF_RFGPT_MODEL_PATH" || status=1
+else
+  log "external vLLM is not managed by this host and will not be stopped"
+fi
 
 if [[ "${RF_LIVE_KEEP_INFRA:-false}" == "true" ]]; then
   log "leaving PostgreSQL and NATS running because RF_LIVE_KEEP_INFRA=true"

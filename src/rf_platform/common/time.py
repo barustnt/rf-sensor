@@ -39,6 +39,7 @@ _CLOCK_RE = re.compile(r"\b(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<ampm>a
 _ISO_DT_RE = re.compile(
     r"\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?)?\b"
 )
+_LAST_HOUR_RE = re.compile(r"\b(?:last|past)\s+hour\b", re.I)
 
 
 def _clock_from_text(text: str) -> tuple[int, int] | None:
@@ -67,15 +68,26 @@ def resolve_historical_interval(
 ) -> InterpretedInterval:
     """Resolve a small deterministic phrase set into a UTC interval.
 
-    Supported Milestone 1 forms: ISO dates/datetimes, `today`, `yesterday`, and optional clock
-    times such as `11 PM`. Ambiguous day-only queries return one local day; clocked queries return
-    a one-hour interval.
+    Supported forms: ISO dates/datetimes, `today`, `yesterday`, `last hour`/`past hour`, and
+    optional clock times such as `11 PM`. Ambiguous day-only queries return one local day;
+    clocked queries return a one-hour interval.
     """
 
     local_tz = ZoneInfo(timezone_name)
     now_local = ensure_utc(now or utc_now()).astimezone(local_tz)
     text = question.strip().lower()
     assumptions: list[str] = []
+
+    if _LAST_HOUR_RE.search(text):
+        end_local = now_local
+        start_local = end_local - timedelta(hours=1)
+        assumptions.append("Interpreted last hour as the previous 60 minutes.")
+        return InterpretedInterval(
+            start_utc=start_local.astimezone(UTC),
+            end_utc=end_local.astimezone(UTC),
+            display_timezone=timezone_name,
+            assumptions=assumptions,
+        )
 
     iso_match = _ISO_DT_RE.search(question)
     if iso_match:
