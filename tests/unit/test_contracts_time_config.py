@@ -34,6 +34,17 @@ def test_yesterday_at_11_pm_interval() -> None:
     assert interval.assumptions
 
 
+def test_last_hour_interval_uses_previous_sixty_minutes() -> None:
+    now = datetime(2026, 9, 1, 7, 30, tzinfo=UTC)
+    interval = resolve_historical_interval(
+        "Was Wi-Fi observed during the last hour?", "Asia/Dubai", now
+    )
+
+    assert interval.start_utc.isoformat() == "2026-09-01T06:30:00+00:00"
+    assert interval.end_utc.isoformat() == "2026-09-01T07:30:00+00:00"
+    assert interval.assumptions == ["Interpreted last hour as the previous 60 minutes."]
+
+
 def test_capture_contract_rejects_naive_datetime() -> None:
     kwargs = dict(
         capture_id="a" * 36,

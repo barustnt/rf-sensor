@@ -772,6 +772,25 @@ def test_experimental_summary_lists_each_consistent_known_technology() -> None:
 def test_wifi_question_has_specific_deterministic_intent() -> None:
     assert interpret_question("Any WiFi nearby?") == QuestionIntent("technology", "wifi")
     assert interpret_question("Was WLAN observed?") == QuestionIntent("technology", "wifi")
+    assert interpret_question("Was Wi‑Fi observed during the last hour?") == QuestionIntent(
+        "technology", "wifi"
+    )
+
+
+def test_last_hour_does_not_reuse_prior_follow_up_interval() -> None:
+    prior = {
+        "start_utc": "2026-08-25T06:00:00+00:00",
+        "end_utc": "2026-08-25T07:00:00+00:00",
+        "display_timezone": "Asia/Dubai",
+    }
+    now = datetime(2026, 9, 1, 7, 30, tzinfo=UTC)
+
+    interval = _resolve_interval(
+        "Was Wi‑Fi observed during the last hour?", "Asia/Dubai", prior, now
+    )
+
+    assert interval.start_utc.isoformat() == "2026-09-01T06:30:00+00:00"
+    assert interval.end_utc.isoformat() == "2026-09-01T07:30:00+00:00"
 
 
 def test_wifi_answer_omits_bluetooth_specific_coverage_limitation() -> None:

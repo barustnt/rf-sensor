@@ -46,7 +46,8 @@ DEFAULT_LIMITATIONS = [
 SUPPORTED_QUESTION_EXAMPLE = "What happened today at 10 AM?"
 
 _TIME_HINT_RE = re.compile(
-    r"\b(today|yesterday|morning|tonight|\d{4}-\d{2}-\d{2}|\d{1,2}(?::\d{2})?\s*(?:am|pm))\b",
+    r"\b(today|yesterday|morning|tonight|last\s+hour|past\s+hour|\d{4}-\d{2}-\d{2}|"
+    r"\d{1,2}(?::\d{2})?\s*(?:am|pm))\b",
     re.I,
 )
 _TECH_5G_RE = re.compile(r"\b(5g|5g\s*nr|nr)\b", re.I)
@@ -57,6 +58,9 @@ _ISM_RE = re.compile(r"\b(ism|srd)\b", re.I)
 _PUNCTUATION_SPACE_RE = re.compile(r"\s+([?!.,;:])")
 _WHITESPACE_RE = re.compile(r"\s+")
 _HAPPEND_ALIAS_RE = re.compile(r"\bhappend\b")
+_UNICODE_DASHES = str.maketrans(
+    {"‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-"}
+)
 
 
 @dataclass(frozen=True)
@@ -778,7 +782,8 @@ def _resolve_interval(
 
 
 def normalize_question(question: str) -> str:
-    normalized = _PUNCTUATION_SPACE_RE.sub(r"\1", question.strip().lower())
+    normalized = question.strip().lower().translate(_UNICODE_DASHES)
+    normalized = _PUNCTUATION_SPACE_RE.sub(r"\1", normalized)
     normalized = _WHITESPACE_RE.sub(" ", normalized)
     return _HAPPEND_ALIAS_RE.sub("happened", normalized)
 
