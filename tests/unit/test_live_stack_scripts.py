@@ -6,6 +6,7 @@ def _script(name: str) -> str:
 
 
 def test_live_up_supports_external_vllm_and_validates_served_model() -> None:
+    assert Path("scripts/live_up.sh").stat().st_mode & 0o100
     source = _script("live_up.sh")
 
     assert 'RF_VLLM_MANAGED_VALUE="${RF_VLLM_MANAGED:-true}"' in source

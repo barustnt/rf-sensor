@@ -57,9 +57,7 @@ _ISM_RE = re.compile(r"\b(ism|srd)\b", re.I)
 _PUNCTUATION_SPACE_RE = re.compile(r"\s+([?!.,;:])")
 _WHITESPACE_RE = re.compile(r"\s+")
 _HAPPEND_ALIAS_RE = re.compile(r"\bhappend\b")
-_UNICODE_DASHES = str.maketrans(
-    {"‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-"}
-)
+_UNICODE_DASHES = str.maketrans({"‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-"})
 
 
 @dataclass(frozen=True)
@@ -555,9 +553,7 @@ def evidence_text(
     unvalidated_count = dataset.unvalidated_capture_count
     rejected_result_count = dataset.rejected_result_count
     if technology is not None:
-        real_capture_count = dataset.technology_coverage_counts.get(
-            technology, real_capture_count
-        )
+        real_capture_count = dataset.technology_coverage_counts.get(technology, real_capture_count)
         unvalidated_count = dataset.technology_experimental_result_counts.get(
             technology, unvalidated_count
         )
@@ -600,9 +596,7 @@ def _profile_not_validated_response(
     if experimental_text:
         answer = experimental_text
     else:
-        answer = (
-            f"No internally consistent {label} candidate was reported during {time_label}."
-        )
+        answer = f"No internally consistent {label} candidate was reported during {time_label}."
     return _response(
         "profile_not_validated",
         answer,
@@ -653,9 +647,7 @@ def _partial_response(
             "period. No reliable conclusion can be provided without further review."
         )
     else:
-        answer = (
-            "No internally consistent candidate technology was reported for this period."
-        )
+        answer = "No internally consistent candidate technology was reported for this period."
     return _response(
         "partial_data",
         answer,
@@ -862,11 +854,7 @@ def _experimental_finding_text(records: list[AskRFRecord], intent: QuestionInten
             f"{_experimental_analysis_count(len(findings))}"
         )
         clauses.append(clause)
-    return (
-        "Preliminary RF-GPT candidates: "
-        + "; ".join(clauses)
-        + "."
-    )
+    return "Preliminary RF-GPT candidates: " + "; ".join(clauses) + "."
 
 
 def _experimental_analysis_count(count: int) -> str:
