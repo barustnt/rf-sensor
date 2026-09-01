@@ -768,9 +768,7 @@ def _experimental_record_from_run(
     return None if compatibility.incompatible else record
 
 
-def _experimental_finding_text(
-    records: list[AskRFRecord], intent: QuestionIntent
-) -> str | None:
+def _experimental_finding_text(records: list[AskRFRecord], intent: QuestionIntent) -> str | None:
     grouped: dict[str, list[dict[str, Any]]] = {}
     pattern = _technology_pattern(intent.technology)
     for record in records:
@@ -785,9 +783,7 @@ def _experimental_finding_text(
     if not grouped:
         return None
 
-    technology, findings = sorted(
-        grouped.items(), key=lambda item: (-len(item[1]), item[0])
-    )[0]
+    technology, findings = sorted(grouped.items(), key=lambda item: (-len(item[1]), item[0]))[0]
     count_text = _count_phrase(len(findings), "internally consistent experimental result")
     text = (
         f"Experimental indication: {_technology_display_label(technology)}-like activity "

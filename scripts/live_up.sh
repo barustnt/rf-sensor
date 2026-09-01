@@ -101,6 +101,7 @@ wait_http() {
   local url="$2"
   local attempts="$3"
   local delay="$4"
+  local log_file="${5-${RUNTIME_DIR}/${name}.log}"
   local attempt
 
   for attempt in $(seq 1 "$attempts"); do
@@ -110,7 +111,9 @@ wait_http() {
     fi
     sleep "$delay"
   done
-  tail -50 "${RUNTIME_DIR}/${name}.log" >&2 || true
+  if [[ -n "$log_file" && -f "$log_file" ]]; then
+    tail -50 "$log_file" >&2 || true
+  fi
   fail "$name did not become ready at $url"
 }
 
@@ -221,7 +224,7 @@ fi
 if [[ "$RF_VLLM_MANAGED_VALUE" == "true" ]]; then
   wait_http vllm "$RF_VLLM_HEALTH_URL_VALUE" 120 5
 else
-  wait_http vllm "$RF_VLLM_HEALTH_URL_VALUE" 12 5
+  wait_http vllm "$RF_VLLM_HEALTH_URL_VALUE" 12 5 ""
 fi
 validate_vllm_model
 
