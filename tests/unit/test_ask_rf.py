@@ -694,8 +694,8 @@ def test_profile_not_validated_answer_for_experimental_5g_coverage() -> None:
     response = build_answer(QuestionIntent("technology", "5g"), _interval(), dataset)
 
     assert response.answer_status == "profile_not_validated"
-    assert "monitored part of this frequency range" in response.display_answer
-    assert "No reliable 5G conclusion" in response.display_answer
+    assert "did not produce an internally consistent 5G candidate" in response.display_answer
+    assert "does not show that 5G was absent" in response.display_answer
     assert "profile" not in response.follow_up_context
 
 
@@ -727,11 +727,43 @@ def test_experimental_lte_score_is_visible_but_not_called_probability() -> None:
     response = build_answer(QuestionIntent("technology", "lte"), _interval(), dataset)
 
     assert response.answer_status == "profile_not_validated"
-    assert "Experimental indication: LTE-like activity" in response.display_answer
-    assert "median model-reported score was 60%" in response.display_answer
-    assert "not a calibrated probability" in response.display_answer
-    assert "10 results did not pass consistency checks" in response.display_answer
-    assert "No reliable LTE conclusion" in response.display_answer
+    assert "Preliminary RF-GPT candidate: possible LTE-like activity" in response.display_answer
+    assert "raw median model score was 0.60/1.00" in response.display_answer
+    assert "must not be interpreted as a 60% probability" in response.display_answer
+    assert "10 results from the relevant scan profiles failed" in response.display_answer
+    assert "rather than confirmed LTE presence" in response.display_answer
+
+
+def test_experimental_summary_lists_each_consistent_known_technology() -> None:
+    dataset = AskRFDataset(
+        real_capture_count=4,
+        rejected_result_count=1,
+        accepted_records=[],
+        experimental_records=[
+            _record(labels=["LTE"], model_score=0.99),
+            _record(labels=["4G"], model_score=0.97),
+            _record(labels=["Bluetooth"], model_score=None),
+            _record(labels=["Wi-Fi"], model_score=0.8),
+        ],
+        locations=[{"site": "campus"}],
+        coverage_ranges_hz=[(1_805_000_000, 5_250_000_000)],
+        unvalidated_capture_count=4,
+    )
+
+    response = build_answer(QuestionIntent("summary"), _interval(), dataset)
+
+    assert response.answer_status == "partial_data"
+    assert "LTE-like activity in 2 internally consistent experimental analyses" in (
+        response.display_answer
+    )
+    assert "Bluetooth/BLE-like activity in one internally consistent experimental analysis" in (
+        response.display_answer
+    )
+    assert "Wi-Fi-like activity in one internally consistent experimental analysis" in (
+        response.display_answer
+    )
+    assert "raw median score 0.98/1.00, uncalibrated" in response.display_answer
+    assert "not confirmed technology detections" in response.display_answer
 
 
 def test_wifi_question_has_specific_deterministic_intent() -> None:
@@ -868,10 +900,11 @@ def test_bluetooth_query_with_only_experimental_and_rejected_data_stays_cautious
         _mixed_experimental_rejected_dataset(),
     )
 
-    assert response.answer_status == "partial_data"
-    assert "Bluetooth was not confirmed" not in response.display_answer
-    assert "observed Bluetooth" not in response.display_answer
-    assert "No reliable conclusion" in response.display_answer
+    assert response.answer_status == "profile_not_validated"
+    assert "did not produce an internally consistent Bluetooth/BLE candidate" in (
+        response.display_answer
+    )
+    assert "does not show that Bluetooth/BLE was absent" in response.display_answer
 
 
 @pytest.mark.parametrize("technology", ["lte", "5g"])

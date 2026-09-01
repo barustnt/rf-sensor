@@ -177,7 +177,7 @@ def build_answer(
     if coverage:
         limitations.append(coverage)
 
-    if intent.technology in {"lte", "5g", "wifi"}:
+    if intent.technology in {"lte", "5g", "bluetooth", "wifi"}:
         tech_count = dataset.technology_coverage_counts.get(intent.technology, 0)
         unvalidated_count = dataset.technology_unvalidated_counts.get(intent.technology, 0)
         presentation_count = dataset.technology_presentation_counts.get(intent.technology, 0)
@@ -599,20 +599,28 @@ def _profile_not_validated_response(
     experimental_text = _experimental_finding_text(
         dataset.experimental_records, QuestionIntent("technology", technology)
     )
-    prefix = f"{experimental_text} " if experimental_text else ""
-    validation_reason = "technology identification for the scan profile has not yet been validated"
+    rejection_text = ""
     if rejected_result_count:
-        validation_reason += (
-            f", and {_count_phrase(rejected_result_count, 'result')} did not pass "
-            "consistency checks"
+        rejection_text = (
+            f" {_count_phrase(rejected_result_count, 'result').capitalize()} from the relevant "
+            "scan profiles failed consistency checks."
+        )
+    if experimental_text:
+        answer = (
+            f"{experimental_text}{rejection_text} The scan profile is not yet validated, so "
+            f"treat this as a preliminary technical observation rather than confirmed {label} "
+            "presence."
+        )
+    else:
+        answer = (
+            f"RF-GPT did not produce an internally consistent {label} candidate during "
+            f"{time_label}. The relevant frequency range was monitored with experimental scan "
+            f"profiles.{rejection_text} This means {label} was not established by this test; it "
+            f"does not show that {label} was absent."
         )
     return _response(
         "profile_not_validated",
-        (
-            f"{prefix}The system monitored part of this frequency range during {time_label}, but "
-            f"{validation_reason}. "
-            f"No reliable {label} conclusion can be provided."
-        ),
+        answer,
         interval,
         time_label,
         location_label,
@@ -657,19 +665,28 @@ def _partial_response(
             "consistency checks"
         )
     if reasons:
-        caution = (
-            "The system collected observations for this period, but "
-            f"{_join_reasons(reasons)}. No reliable conclusion can be provided."
-        )
+        reason_text = _join_reasons(reasons)
     else:
-        caution = (
-            "The system collected observations for this period, but some results did not pass "
-            "consistency checks. No reliable conclusion can be provided."
-        )
+        reason_text = "the available observations need further technical review"
     experimental_text = _experimental_finding_text(
         dataset.experimental_records, intent or QuestionIntent("summary")
     )
-    answer = f"{experimental_text} {caution}" if experimental_text else caution
+    if experimental_text:
+        answer = (
+            f"{experimental_text} The remaining limitation is that {reason_text}. Treat these "
+            "as preliminary technical observations rather than confirmed detections."
+        )
+    elif not reasons:
+        answer = (
+            "The system collected conflicting internally consistent observations for this "
+            "period. No reliable conclusion can be provided without further review."
+        )
+    else:
+        answer = (
+            "RF-GPT did not produce an internally consistent candidate technology for this "
+            f"period. The system collected observations, but {reason_text}. This does not show "
+            "that monitored technologies were absent."
+        )
     return _response(
         "partial_data",
         answer,
@@ -858,12 +875,38 @@ def _experimental_finding_text(records: list[AskRFRecord], intent: QuestionInten
     if not grouped:
         return None
 
-    technology, findings = sorted(grouped.items(), key=lambda item: (-len(item[1]), item[0]))[0]
-    count_text = _count_phrase(len(findings), "internally consistent experimental result")
-    text = (
-        f"Experimental indication: {_technology_display_label(technology)}-like activity "
-        f"appeared in {count_text}."
+    ordered = sorted(grouped.items(), key=lambda item: (-len(item[1]), item[0]))
+    if intent.technology is not None:
+        technology, findings = ordered[0]
+        text = (
+            "Preliminary RF-GPT candidate: possible "
+            f"{_technology_display_label(technology)}-like activity was reported in "
+            f"{_experimental_analysis_count(len(findings))}."
+        )
+        if (score := _median_model_score(findings)) is not None:
+            text += (
+                f" The raw median model score was {score:.2f}/1.00; it is uncalibrated and "
+                f"must not be interpreted as a {round(score * 100)}% probability."
+            )
+        return text
+
+    clauses = []
+    for technology, findings in ordered:
+        clause = (
+            f"{_technology_display_label(technology)}-like activity in "
+            f"{_experimental_analysis_count(len(findings))}"
+        )
+        if (score := _median_model_score(findings)) is not None:
+            clause += f" (raw median score {score:.2f}/1.00, uncalibrated)"
+        clauses.append(clause)
+    return (
+        "Preliminary RF-GPT candidates: "
+        + "; ".join(clauses)
+        + ". These are model candidates, not confirmed technology detections."
     )
+
+
+def _median_model_score(findings: list[dict[str, Any]]) -> float | None:
     scores = [
         float(score)
         for finding in findings
@@ -873,13 +916,13 @@ def _experimental_finding_text(records: list[AskRFRecord], intent: QuestionInten
         and isfinite(float(score))
         and 0 <= float(score) <= 1
     ]
-    if scores:
-        percentage = round(median(scores) * 100)
-        text += (
-            f" The median model-reported score was {percentage}%; this is not a calibrated "
-            "probability."
-        )
-    return text
+    return median(scores) if scores else None
+
+
+def _experimental_analysis_count(count: int) -> str:
+    if count == 1:
+        return "one internally consistent experimental analysis"
+    return f"{count} internally consistent experimental analyses"
 
 
 def _canonical_technology(label: str) -> str | None:
