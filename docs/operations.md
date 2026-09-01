@@ -169,6 +169,11 @@ remote server with `--served-model-name rfgpt`. If that is not possible, set
 `RF_VLLM_MANAGED=false`, it never attempts to stop the external vLLM. It stops operational Compose
 services without `-v`, so the PostgreSQL history volume is preserved.
 
+When `RF_GRADIO_SHARE=true` (the `live_up.sh` default), startup prints separate temporary
+`gradio.live` links for Command Center and Ask RF. Set `RF_GRADIO_SHARE=false` to keep both
+interfaces local. The Command Center link exposes technical operator views and actions without an
+application login, so share it only with trusted operators and stop the stack when the session ends.
+
 Experimental Ask RF findings may include an aggregate model-reported score when the stored model
 output supplied one. The score is explicitly labeled as uncalibrated, rejected or band-incompatible
 results are excluded from it, and the answer remains non-definitive until the scan profile is

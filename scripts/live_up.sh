@@ -129,6 +129,28 @@ show_service() {
   fi
 }
 
+show_gradio_public_url() {
+  local service="$1"
+  local label="$2"
+  local public_url=""
+  local attempt
+
+  for attempt in $(seq 1 30); do
+    public_url="$(
+      grep -Eo 'https://[^ ]+\.gradio\.live' "${RUNTIME_DIR}/${service}.log" |
+        tail -1 || true
+    )"
+    [[ -n "$public_url" ]] && break
+    sleep 2
+  done
+  if [[ -n "$public_url" ]]; then
+    printf '%-22s %s\n' "$label" "$public_url"
+    return
+  fi
+  log "WARNING: $service is local, but no public Gradio URL was found"
+  return 1
+}
+
 validate_vllm_model() {
   local models_url="$RF_VLLM_MODELS_URL_VALUE"
 
@@ -290,7 +312,7 @@ start_service \
     RF_PLATFORM_URL=http://127.0.0.1:8000 \
     RF_DASHBOARD_HOST=127.0.0.1 \
     RF_DASHBOARD_PORT=7860 \
-    RF_GRADIO_SHARE=false \
+    RF_GRADIO_SHARE="$RF_GRADIO_SHARE_VALUE" \
     PYTHONUNBUFFERED=1 \
     "$RF_INTEL_PYTHON" -u -m rf_platform.dashboard.main
 wait_http dashboard http://127.0.0.1:7860 60 2
@@ -325,18 +347,8 @@ printf '%-16s %s\n' "Command Center" "http://127.0.0.1:7860"
 printf '%-16s %s\n' "Ask RF local" "http://127.0.0.1:7861"
 
 if [[ "$RF_GRADIO_SHARE_VALUE" == "true" ]]; then
-  public_url=""
-  for attempt in $(seq 1 30); do
-    public_url="$(grep -Eo 'https://[^ ]+\.gradio\.live' "${RUNTIME_DIR}/ask-rf.log" | tail -1 || true)"
-    [[ -n "$public_url" ]] && break
-    sleep 2
-  done
-  if [[ -n "$public_url" ]]; then
-    printf '%-16s %s\n' "Ask RF public" "$public_url"
-  else
-    log "WARNING: Ask RF is local, but no public Gradio URL was found"
-    status=1
-  fi
+  show_gradio_public_url dashboard "Command Center public" || status=1
+  show_gradio_public_url ask-rf "Ask RF public" || status=1
 fi
 
 log "logs and PID files: $RUNTIME_DIR"

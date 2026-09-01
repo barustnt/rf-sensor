@@ -37,7 +37,6 @@ from rf_platform.worker.semantic_markers import (
 
 BLUETOOTH_RANGE_HZ = (2_402_000_000, 2_480_000_000)
 DEFAULT_LIMITATIONS = [
-    "AI-assisted RF observation—not independently confirmed ground truth.",
     (
         "Answers are based only on accepted stored observations already available through the "
         "platform API."

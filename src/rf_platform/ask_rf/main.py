@@ -10,7 +10,6 @@ from rf_platform.common.config import get_settings
 from rf_platform.common.logging import configure_logging, get_logger
 from rf_platform.contracts.api import AskRFResponse
 
-NOTICE = "AI-assisted RF observation—not independently confirmed ground truth."
 EXAMPLES = [
     "What technologies are nearby?",
     "Was anything unusual this morning?",
@@ -237,7 +236,6 @@ def landing_markup(status: str) -> str:
   <p class="askrf-supporting">
     Ask about wireless activity, nearby technologies, or what happened at a specific time.
   </p>
-  <p class="askrf-notice">{NOTICE}</p>
 </div>
 """
 
@@ -251,7 +249,6 @@ def render_answer(response: AskRFResponse, question: str) -> tuple[str, str, str
     Time: {escape_visible(response.time_label)}
     · Location: {escape_visible(response.location_label)}
   </p>
-  <p class="askrf-notice">{NOTICE}</p>
 </div>
 """
     detail_lines = [escape_visible(response.evidence_explanation)]

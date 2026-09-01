@@ -415,7 +415,7 @@ def test_rendered_answer_hides_json_and_technical_identifiers() -> None:
         time_label="August 26, 2026, between 10 AM and 11 AM",
         location_label="campus / lab",
         evidence_explanation="Used 1 accepted observation from 1 real hardware capture.",
-        limitations=["AI-assisted RF observation—not independently confirmed ground truth."],
+        limitations=["Answers are based only on stored observations."],
         follow_up_context={"analysis_id": "a3c875f4-94ac-4247-990d-a04b983f3fdf"},
     )
 
@@ -457,7 +457,7 @@ def test_plain_language_rendering_for_every_answer_status(status: str) -> None:
         time_label="August 26, 2026, between 10 AM and 11 AM",
         location_label="monitored area",
         evidence_explanation="Used accepted observations only.",
-        limitations=["AI-assisted RF observation—not independently confirmed ground truth."],
+        limitations=["Answers are based only on stored observations."],
         follow_up_context={},
     )
 
@@ -642,6 +642,18 @@ def test_ask_rf_hides_gradio_technical_footer() -> None:
     assert '[data-testid="footer"]' in ASK_RF_CSS
     footer_css_start = ASK_RF_CSS.index("footer,")
     assert "display: none !important" in ASK_RF_CSS[footer_css_start:]
+
+
+def test_ask_rf_omits_deprecated_ground_truth_notice() -> None:
+    public_sources = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in [
+            Path("src/rf_platform/ask_rf/main.py"),
+            Path("src/rf_platform/backend/services/ask_rf.py"),
+        ]
+    )
+
+    assert "AI-assisted RF observation" not in public_sources
 
 
 def test_ask_rf_css_wraps_responsively_without_fixed_overflow() -> None:
