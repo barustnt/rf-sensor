@@ -816,6 +816,8 @@ def _canonical_technology(label: str) -> str | None:
 
 
 def _technology_pattern(technology: str | None) -> re.Pattern[str] | None:
+    if technology is None:
+        return None
     return {
         "lte": _LTE_RE,
         "5g": _TECH_5G_RE,
